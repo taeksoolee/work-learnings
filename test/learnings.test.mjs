@@ -226,6 +226,11 @@ test('hints: 배움이 숨어 있기 쉬운 커밋·주석·완료 일감을 나
   write(d, 'docs/tickets/done/20260930_200_bug-chip-cut.md', '---\ntype: bug\n---\n\n# 칩 끝이 잘리지 않음\n\n## 원인\n\n여백\n');
   write(d, 'docs/tickets/done/20260920_300_epic-big/README.md', '# 큰 에픽\n');
   write(d, 'docs/tickets/todo/400_task-later.md', '# 아직 안 한 일\n');
+  // 주의 문서: 파일 이름, 또는 md 의 주의·함정 제목
+  write(d, 'docs/CAVEATS.md', '# Caveats\n\n아무 내용\n');
+  write(d, 'README.md', '# 앱\n\n## 주의할 점\n\n## 설치\n');
+  write(d, 'docs/guide.md', '# 가이드\n\n### Gotchas\n\n<!-- 주의: md 주석은 주석으로 본다 -->\n');
+  write(d, `${L}/README.md`, '## 주의 — learnings 색인은 보지 않는다\n');
   commit(d, 'feat: 화면 추가');
   commit(d, 'fix: 오타');
   git(d, 'commit', '-q', '--allow-empty', '-m', 'fix: 모바일에서 칩 끝이 잘리지 않던 문제', '-m', '오른쪽 여백 때문에 목록이 끝난 것처럼 보였다.\n잘린 끝이 신호다.');
@@ -233,14 +238,28 @@ test('hints: 배움이 숨어 있기 쉬운 커밋·주석·완료 일감을 나
   commit(d, 'docs: 원인 분석 문서 수정');
   commit(d, 'chore(deps): 우회 패치 제거');
   commit(d, 'Revert "feat: 무한 스크롤"');
+  // 바뀐 파일이 설정·문서뿐인 fix — 빼지 않고 표시만 (프로젝트 설정 변경일 때가 많다)
+  write(d, 'package.json', '{"port": 8787}\n');
+  write(d, 'wrangler.toml', 'port = 8787\n');
+  git(d, 'add', '-A');
+  git(d, 'commit', '-q', '-m', 'fix: 로컬 API 포트를 8787 로 통일', '-m', '포트가 두 군데서 달랐다.');
+  write(d, 'src/b.ts', 'export const b = 1;\n');
+  write(d, 'docs/b.md', 'b\n');
+  git(d, 'add', '-A');
+  git(d, 'commit', '-q', '-m', 'fix: 코드가 섞인 수정', '-m', '코드도 바뀌었다.');
 
   const out = ok(d, 'hints');
-  // 본문("왜")이 있는 커밋이 먼저, 본문 없는 커밋은 뒤에
-  const withBody = out.indexOf('fix: 모바일에서 칩 끝이');
-  assert.ok(withBody >= 0 && withBody < out.indexOf('fix: 오타'), out);
-  assert.ok(out.indexOf('refactor: 목록 상태 공유') < out.indexOf('Revert "feat: 무한 스크롤"'), out);
+  // 본문("왜")이 있는 커밋이 먼저 — 본문 긴 순. 본문 없는 커밋은 따로, 뒤에
+  assert.match(out, /본문 있는 커밋 \(4\)/);
+  assert.match(out, /본문 없는 커밋 \(2\)/);
+  const at = (t) => { const i = out.indexOf(t); assert.ok(i >= 0, `${t}\n${out}`); return i; };
+  assert.ok(at('fix: 모바일에서 칩 끝이') < at('refactor: 목록 상태 공유'), out);
+  assert.ok(at('refactor: 목록 상태 공유') < at('본문 없는 커밋'), out);
+  assert.ok(at('본문 없는 커밋') < at('Revert "feat: 무한 스크롤"') && at('본문 없는 커밋') < at('fix: 오타'), out);
   assert.match(out, /fix: 모바일에서 칩 끝이.*\(본문 2줄\)/);
   assert.doesNotMatch(out, /feat: 화면 추가|docs: 원인 분석|chore\(deps\)/);
+  assert.match(out, /fix: 로컬 API 포트를 8787 로 통일 {2}\(본문 1줄\) \(설정·문서만\)/);
+  assert.match(out, /fix: 코드가 섞인 수정 {2}\(본문 1줄\)\n/);
 
   assert.match(out, /src\/a\.ts:2 .*HACK: Safari/);
   assert.match(out, /src\/a\.ts:3 .*주의: 이 순서/);
@@ -249,7 +268,14 @@ test('hints: 배움이 숨어 있기 쉬운 커밋·주석·완료 일감을 나
   assert.match(out, /src\/a\.ts:7 .*깨진다/);
   assert.match(out, /src\/a\.ts:8 .*함정/);
   assert.doesNotMatch(out, /src\/a\.ts:(4|9) /);
-  assert.doesNotMatch(out, /설치본은|이미 기록한/);
+  assert.doesNotMatch(out, /설치본은|이미 기록한|learnings 색인/);
+  assert.match(out, /docs\/guide\.md:5 .*<!-- 주의: md 주석/);
+
+  assert.match(out, /주의 문서 \(3\)/);
+  assert.match(out, /\n {2}docs\/CAVEATS\.md\n/);
+  assert.match(out, /README\.md:3 {2}## 주의할 점/);
+  assert.match(out, /docs\/guide\.md:3 {2}### Gotchas/);
+  assert.doesNotMatch(out, /## 설치|README\.md:3 .*\n.*README\.md:3/); // md 제목은 주석 절에 중복으로 나오지 않는다
 
   // repo-tickets 를 함께 쓰면 완료 일감이 가장 진한 단서다 — 최근 것부터, 제목과 함께
   assert.match(out, /완료 일감 \(3\)/);
@@ -259,11 +285,20 @@ test('hints: 배움이 숨어 있기 쉬운 커밋·주석·완료 일감을 나
   assert.match(out, /단서일 뿐/);
 
   const one = ok(d, 'hints', '--limit', '1');
-  assert.match(one, /고친·되돌린 커밋 \(1\)/);
-  assert.match(one, /완료 일감 \(1\)/);
+  // 잘렸으면 (보인 수/전체)
+  assert.match(one, /본문 있는 커밋 \(1\/4\)/);
+  assert.match(one, /본문 없는 커밋 \(1\/2\)/);
+  assert.match(one, /완료 일감 \(1\/3\)/);
   assert.match(ok(d, 'hints', '--since', '2000-01-01'), /fix: 모바일/);
   const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-  assert.match(ok(d, 'hints', '--since', tomorrow), /고친·되돌린 커밋 \(0\)/);
+  assert.match(ok(d, 'hints', '--since', tomorrow), /본문 있는 커밋 \(0\)/);
+});
+
+test('hints: 본문 없는 커밋은 기본 10개까지', () => {
+  const d = repo();
+  for (let i = 0; i < 12; i++) commit(d, `fix: 본문 없는 수정 ${i}`);
+  assert.match(ok(d, 'hints'), /본문 없는 커밋 \(10\/12\)/);
+  assert.match(ok(d, 'hints', '--limit', '30', '--all'), /본문 없는 커밋 \(12\)/);
 });
 
 test('hints: 완료 일감 폴더가 없으면 그 절을 쓰지 않는다', () => {
