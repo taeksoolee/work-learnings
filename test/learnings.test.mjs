@@ -265,6 +265,7 @@ test('hints: 배움이 숨어 있기 쉬운 커밋·주석·완료 일감을 나
   git(d, 'commit', '-q', '--allow-empty', '-m', 'refactor: 목록 상태 공유', '-m', '진행 중 요청을 무시하면 입력이 조용히 버려진다.');
   commit(d, 'docs: 원인 분석 문서 수정');
   commit(d, 'chore(deps): 우회 패치 제거');
+  git(d, 'commit', '-q', '--allow-empty', '-m', 'ci: required check 는 집계 잡 하나에만 건다', '-m', '건너뛴 required 잡은 통과로 안 쳐져 머지가 막혔다.');
   commit(d, 'Revert "feat: 무한 스크롤"');
   // 바뀐 파일이 설정·문서뿐인 fix — 빼지 않고 표시만 (프로젝트 설정 변경일 때가 많다)
   write(d, 'package.json', '{"port": 8787}\n');
@@ -278,12 +279,16 @@ test('hints: 배움이 숨어 있기 쉬운 커밋·주석·완료 일감을 나
 
   const out = ok(d, 'hints');
   // 본문("왜")이 있는 커밋이 먼저 — 본문 긴 순. 본문 없는 커밋은 따로, 뒤에
-  assert.match(out, /본문 있는 커밋 \(4\)/);
-  assert.match(out, /본문 없는 커밋 \(2\)/);
+  assert.match(out, /본문 있는 커밋 \(5\)/);
+  assert.match(out, /본문 없는 커밋 \(1\)/);
+  assert.match(out, /Revert 1건 — 제목만으로는 판단할 근거가 없어 따로 셌다/);
   const at = (t) => { const i = out.indexOf(t); assert.ok(i >= 0, `${t}\n${out}`); return i; };
   assert.ok(at('fix: 모바일에서 칩 끝이') < at('refactor: 목록 상태 공유'), out);
   assert.ok(at('refactor: 목록 상태 공유') < at('본문 없는 커밋'), out);
-  assert.ok(at('본문 없는 커밋') < at('Revert "feat: 무한 스크롤"') && at('본문 없는 커밋') < at('fix: 오타'), out);
+  assert.ok(at('본문 없는 커밋') < at('fix: 오타'), out);
+  assert.doesNotMatch(out, /Revert "feat: 무한 스크롤"/);
+  // ci: 커밋도 단서다 — CI 함정이 배울 거리인 경우가 많다
+  assert.match(out, /ci: required check 는 집계 잡 하나에만 건다/);
   assert.doesNotMatch(out, /feat: 화면 추가|docs: 원인 분석|chore\(deps\)/);
   assert.match(out, /fix: 로컬 API 포트를 8787 로 통일 {2}\(본문 1줄\) \(설정\)/);
   assert.match(out, /fix: 모바일에서 칩 끝이.*\(본문 2줄 · 이유 1\)/);
@@ -314,8 +319,8 @@ test('hints: 배움이 숨어 있기 쉬운 커밋·주석·완료 일감을 나
 
   const one = ok(d, 'hints', '--limit', '1');
   // 잘렸으면 (보인 수/전체)
-  assert.match(one, /본문 있는 커밋 \(1\/4\)/);
-  assert.match(one, /본문 없는 커밋 \(1\/2\)/);
+  assert.match(one, /본문 있는 커밋 \(1\/5\)/);
+  assert.match(one, /본문 없는 커밋 \(1\)/);
   assert.match(one, /완료 일감 \(1\/3\)/);
   assert.match(ok(d, 'hints', '--since', '2000-01-01'), /fix: 모바일/);
   const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
@@ -338,11 +343,15 @@ test('hints: 커밋 본문의 잡음은 본문으로 치지 않고, 이유 표�
   const out = ok(d, 'hints');
   const body = out.slice(out.indexOf('본문 있는 커밋'), out.indexOf('본문 없는 커밋'));
   const none = out.slice(out.indexOf('본문 없는 커밋'));
-  for (const t of ['Revert "feat: 무한 스크롤"', 'hotfix: 설정 변경', 'fix: 트레일러만']) {
+  assert.doesNotMatch(out, /Revert "feat: 무한 스크롤"/);
+  assert.match(none, /Revert 1건/);
+  for (const t of ['hotfix: 설정 변경', 'fix: 트레일러만']) {
     assert.doesNotMatch(body, new RegExp(t.replace(/[()"]/g, '.')), out);
     assert.match(none, new RegExp(t.replace(/[()"]/g, '.')), out);
   }
-  assert.ok(body.indexOf('fix: 짧지만 이유가 있다') < body.indexOf('refactor: 큰 변경'), out);
+  // 본문 길이가 먼저다 — 이유 표현은 저장소마다 쓰는 말이 달라("→", "…라서") 동점일 때만 본다
+  assert.ok(body.indexOf('refactor: 큰 변경') < body.indexOf('fix: 짧지만 이유가 있다'), out);
+  assert.ok(body.indexOf('fix: 짧지만 이유가 있다') < body.indexOf('fix: 브랜치 쪽 수정'), out); // 1줄끼리는 이유 표현 순
   assert.match(body, /fix: 짧지만 이유가 있다 {2}\(본문 1줄 · 이유 2\)/);
   assert.doesNotMatch(out, /머지 커밋은/);
   assert.match(out, /fix: 브랜치 쪽 수정/);
@@ -399,16 +408,58 @@ test('hints: 주의 문서 파일은 제목 목록과 함께, 완료 일감은 �
   assert.match(out, /배울 거리는 0개일 수 있다/);
 });
 
-test('hints: 본문 없는 커밋은 기본 10개까지', () => {
+test('hints: 본문 없는 커밋은 기본 5개까지', () => {
   const d = repo();
   for (let i = 0; i < 12; i++) commit(d, `fix: 본문 없는 수정 ${i}`);
-  assert.match(ok(d, 'hints'), /본문 없는 커밋 \(10\/12\)/);
+  assert.match(ok(d, 'hints'), /본문 없는 커밋 \(5\/12\)/);
   assert.match(ok(d, 'hints', '--limit', '30', '--all'), /본문 없는 커밋 \(12\)/);
 });
 
 test('hints: 완료 일감 폴더가 없으면 그 절을 쓰지 않는다', () => {
   const d = repo();
   assert.doesNotMatch(ok(d, 'hints'), /완료 일감/);
+});
+
+test('hints: 주석은 폴더를 번갈아 뽑는다 — 한 폴더에 쏠리지 않게', () => {
+  const d = repo();
+  for (let i = 0; i < 4; i++) write(d, `src/a/f${i}.ts`, `// 주의: a 폴더 ${i}\n`);
+  write(d, 'src/b/g.ts', '// 주의: b 폴더\n');
+  write(d, 'src/c/h.ts', '// 주의: c 폴더\n');
+  commit(d, 'add');
+  const out = ok(d, 'hints', '--limit', '3');
+  assert.match(out, /주의·우회 주석 \(3\/6\)/);
+  assert.match(out, /a 폴더 0/);
+  assert.match(out, /b 폴더/);
+  assert.match(out, /c 폴더/);
+  assert.doesNotMatch(out, /a 폴더 1/);
+});
+
+test('hints: 완료 일감의 절은 제목이 원인·재현 … 으로 시작할 때만', () => {
+  const d = repo();
+  write(d, 'docs/tickets/done/20261001_100_task-decided.md', '# 결정만 있는 일감\n\n## ETag/304: 재현하지 않는다\n\n## 재현하지 않는다\n\n본문\n');
+  write(d, 'docs/tickets/done/20260901_100_bug-real.md', '# 진짜 버그\n\n## 재현 조건\n\n1\n\n## 원인\n\n2\n');
+  commit(d, 'add');
+  const out = ok(d, 'hints');
+  assert.match(out, /진짜 버그 {2}\(재현 조건 · 원인 · \d+줄\)/);
+  assert.match(out, /결정만 있는 일감 {2}\(\d+줄\)/);
+  assert.ok(out.indexOf('진짜 버그') < out.indexOf('결정만 있는 일감'), out);
+});
+
+test('add: 출처가 커밋 해시로 시작하고 --date 가 없으면 그 커밋 날짜를 쓴다', () => {
+  const d = repo();
+  ok(d, 'init');
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'fix: 옛 수정'],
+    { cwd: d, env: { ...process.env, GIT_AUTHOR_DATE: '2026-09-26T12:00:00', GIT_COMMITTER_DATE: '2026-09-26T12:00:00' } });
+  const hash = git(d, 'rev-parse', '--short', 'HEAD').trim();
+  const out = ok(d, 'add', '--category', 'git', '--title', '옛 커밋에서 배운 것', '--why', 'w', '--when', 'n', '--source', `${hash} 옛 수정`);
+  assert.match(out, new RegExp(`날짜: 커밋 ${hash} 의 날짜 2026-09-26`));
+  assert.match(read(d, `${L}/git.md`), new RegExp(`- 출처: 2026-09-26, ${hash} 옛 수정`));
+  // --date 가 있으면 그것을 쓴다
+  ok(d, 'add', '--category', 'git', '--title', '날짜를 직접 준 항목', '--why', 'w', '--when', 'n', '--source', `${hash} x`, '--date', '2026-01-02');
+  assert.match(read(d, `${L}/git.md`), /- 출처: 2026-01-02, /);
+  // 찾을 수 없는 해시면 오늘 날짜로 쓰고 알려 준다
+  const miss = ok(d, 'add', '--category', 'git', '--title', '없는 커밋을 가리킨 항목', '--why', 'w', '--when', 'n', '--source', 'deadbeef0 작업');
+  assert.match(miss, /커밋 deadbeef0 을 찾지 못했다 — 오늘 날짜로/);
 });
 
 // 설치본이 repo-tickets lint 에 걸리면 안 된다 — 같이 설치된 저장소에서 없는 일감 참조 오류가 된다.

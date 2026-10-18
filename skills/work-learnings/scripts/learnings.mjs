@@ -35,9 +35,11 @@ const EXTRA_HEADING = '## 추가 카테고리';
 const EXTRA_ROW_RE = /^\| `([a-z0-9-]+)` \| (.*?) \| (.*?) \|$/;
 
 // hints: 배움이 숨어 있기 쉬운 곳. 판정이 아니라 AI 가 읽어 볼 단서 목록이다.
-// 커밋: 고친·되돌린·다시 짠 커밋. 문서·잡일 커밋은 "원인"·"우회" 같은 말이 들어 있어도 뺀다. 머지 커밋은 보지 않는다.
-const HINT_COMMIT_RE = /^(?:fix|hotfix|revert|perf|refactor)\b|^Revert "|workaround|우회|되돌림|원인/i;
-const HINT_COMMIT_SKIP_RE = /^(?:docs|chore|style|ci|build|test)\b/i;
+// 커밋: 고친·되돌린·다시 짠 커밋과 CI·빌드 커밋(CI 함정이 배울 거리인 경우가 많다).
+// 문서·잡일 커밋은 "원인"·"우회" 같은 말이 들어 있어도 뺀다. 머지 커밋은 보지 않는다.
+const HINT_COMMIT_RE = /^(?:fix|hotfix|revert|perf|refactor|ci|build)\b|^Revert "|workaround|우회|되돌림|원인/i;
+const HINT_COMMIT_SKIP_RE = /^(?:docs|chore|style|test)\b/i;
+const REVERT_RE = /^(?:revert\b|Revert ")/i;
 // 본문으로 치지 않는 줄: 트레일러(Co-Authored-By 등), Revert 자동 본문, 스쿼시 본문의 하위 커밋 제목 나열.
 const BODY_NOISE_RE = [
   /^[\w-]+: .*(?:@|\b[0-9a-f]{7,}\b)/i, // Co-Authored-By: …<…@…>, Change-Id: I0a1b…
@@ -46,7 +48,8 @@ const BODY_NOISE_RE = [
   /^\(cherry picked from commit [0-9a-f]+\)/i,
   /^\s*[*-]\s+(?:(?:feat|fix|hotfix|refactor|perf|docs|chore|style|ci|build|test|revert)(?:\([^)]*\))?!?:|Merge |Revert )/i,
 ];
-// "왜" 를 적을 때 흔한 표현. 본문 길이는 교훈 밀도가 아니라 변경 규모를 따라가서, 이 표현이 많은 본문을 먼저 보인다.
+// "왜" 를 적을 때 흔한 표현. 본문 길이가 같을 때만 순서에 쓴다 — 저장소마다 이유를 쓰는 말이 달라("→"·"…라서"·
+// "제약으로 …불가") 이 목록을 1순위로 쓰면 좋은 후보가 밀렸다.
 const WHY_RE = /왜|때문|원인|함정|조용히|대신|그래서|않아서|깨지|깨진|because|otherwise|instead|so that|caused|root cause|silently/gi;
 // 주석: 주석 기호 바로 뒤의 표지(HACK·주의 …), 또는 주석 안 어디든 "왜" 를 적을 때 흔한 말(함정·조용히·깨진다).
 const COMMENT_START = '(?:\\/\\/|\\/\\*|<!--|#|^\\s*\\*|^\\s*--)';
@@ -55,7 +58,8 @@ const MD_COMMENT_RE = /<!--\s*(?:@?(?:HACK|WORKAROUND|XXX|GOTCHA|CAVEAT)\b|주�
 // 설치된 skill·다른 도구의 폴더(`.borrow-practice/` 처럼 점으로 시작하는 폴더, .github 제외)는 이 저장소의 코드가 아니다.
 const HINT_SKIP_RE = /(?:^|\/)(?:skills\/work-learnings|node_modules)\/|(?:^|\/)\.(?!github\/)[^/]+\//;
 const COMMENTS_PER_FILE = 3;
-const BODYLESS_DEFAULT = 10;
+const BODYLESS_DEFAULT = 5;
+const HASH_SOURCE_RE = /^([0-9a-f]{7,40})\b/;
 // 바뀐 파일이 전부 코드 아닌 파일이면 종류를 표시한다 — 프로젝트 설정 변경일 때가 많지만, CI·빌드 함정은 배울 거리일 수 있어 빼지 않는다.
 const FILE_KINDS = [
   ['CI·빌드', /(?:^|\/)(?:\.github\/|\.gitlab-ci|\.circleci\/|Jenkinsfile|azure-pipelines|bitbucket-pipelines|Dockerfile|docker-compose|Makefile$|turbo\.json$|nx\.json$|tsconfig[^/]*\.json$|[^/]+\.config\.\w+$)/i],
@@ -69,7 +73,8 @@ const HEADINGS_PER_DOC = 5;
 // repo-tickets 의 완료 일감 (`<YYYYMMDD>_<우선순위>_<이름>.md` 또는 에픽 디렉터리)
 const DONE_DIR = 'docs/tickets/done';
 const DONE_ENTRY_RE = /^\d{8}_\d{3}_[a-z]+-[a-z0-9-]+(\.md)?$/;
-const DONE_SECTION_RE = /^#{2,6}\s+(.*(?:원인|재현|배운|교훈|함정|경위|root cause|lessons?).*)$/i;
+// 제목이 이 말로 시작할 때만 — "ETag/304: 재현하지 않는다" 같은 결정 문장을 절로 오인하지 않게.
+const DONE_SECTION_RE = /^#{2,6}\s+((?:원인|재현|배운|교훈|함정|경위|root cause|lessons?)(?![가-힣]*(?:하지|않)).*?)\s*$/i;
 
 // ---------- 공통 ----------
 
@@ -284,8 +289,8 @@ function checkItem(cats, opt, label) {
   if (TITLE_DASH_RE.test(title)) fail(`${at}제목에 ' — ' 가 있다 — 제안의 '제목 — 왜' 에서 뒤쪽은 --why 로 (제목은 배운 것 하나)`);
   const source = need('source');
   if (LEADING_DATE_RE.test(source)) fail(`${at}--source 에 날짜를 넣지 않는다 — 날짜는 --date 로 (출처 줄 맨 앞에 붙는다)`);
-  const date = opt.date === undefined ? today() : String(opt.date);
-  if (!DATE_RE.test(date)) fail(`${at}--date 는 YYYY-MM-DD`);
+  const date = opt.date === undefined ? null : String(opt.date);
+  if (date !== null && !DATE_RE.test(date)) fail(`${at}--date 는 YYYY-MM-DD`);
   return { category, title, why: need('why'), when: need('when'), source, date };
 }
 
@@ -295,6 +300,16 @@ function cmdAdd(ctx, pos, opt) {
   const flags = Object.fromEntries(Object.entries(opt).filter(([k]) => k !== 'stdin' && k !== 'force'));
   const raw = opt.stdin ? readStdinItems(opt).map((x) => ({ ...x, ...flags })) : [opt];
   const batch = raw.map((x, i) => checkItem(cats, x, raw.length > 1 ? `${i + 1}번` : ''));
+  // 날짜는 그 일이 있던 날 — 출처가 커밋 해시로 시작하면 그 커밋 날짜, 아니면 오늘.
+  for (const it of batch) {
+    if (it.date) continue;
+    const hash = it.source.match(HASH_SOURCE_RE)?.[1];
+    if (!hash) { it.date = today(); continue; }
+    let found = '';
+    try { found = execFileSync('git', ['-C', ctx.root, 'log', '-1', '--format=%ad', '--date=short', hash], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { /* 없는 커밋 */ }
+    it.date = DATE_RE.test(found) ? found : today();
+    console.log(DATE_RE.test(found) ? `날짜: 커밋 ${hash} 의 날짜 ${found}` : `커밋 ${hash} 을 찾지 못했다 — 오늘 날짜로 (${it.date}). 다르면 --date`);
+  }
 
   // 기존 항목·같은 묶음 안의 앞 항목과 비교한다. 하나라도 걸리면 아무것도 쓰지 않는다.
   const seen = [...items];
@@ -433,18 +448,21 @@ function cmdHints(ctx, pos, opt) {
         kinds: fileKinds(names.split('\n').filter(Boolean)) };
     })
     .filter((c) => HINT_COMMIT_RE.test(c.subject) && !HINT_COMMIT_SKIP_RE.test(c.subject));
-  const withBody = commits.filter((c) => c.bodyLines).sort((a, b) => b.why - a.why || b.bodyLines - a.bodyLines || a.order - b.order);
-  const bodyless = commits.filter((c) => !c.bodyLines);
+  const withBody = commits.filter((c) => c.bodyLines).sort((a, b) => b.bodyLines - a.bodyLines || b.why - a.why || a.order - b.order);
+  // 본문 없는 Revert 는 제목만으로 판단할 근거가 없다 — 목록에 넣지 않고 개수만.
+  const reverts = commits.filter((c) => !c.bodyLines && REVERT_RE.test(c.subject));
+  const bodyless = commits.filter((c) => !c.bodyLines && !REVERT_RE.test(c.subject));
   const line = (c) => {
     const tags = [c.bodyLines ? `본문 ${c.bodyLines}줄${c.why ? ` · 이유 ${c.why}` : ''}` : '', c.kinds ?? ''].filter(Boolean);
     return `  ${c.hash}  ${c.date}  ${c.subject}${tags.length ? `  ${tags.map((t) => `(${t})`).join(' ')}` : ''}`;
   };
   const a = withBody.slice(0, limit);
-  console.log(`\n본문 있는 커밋 (${shown(a.length, withBody.length)}) — 이유 표현 많은 순, 그다음 본문 긴 순. \`git show <해시>\` 로 "왜" 를 읽는다`);
+  console.log(`\n본문 있는 커밋 (${shown(a.length, withBody.length)}) — 본문 긴 순(같으면 이유 표현 많은 순). \`git show <해시>\` 로 "왜" 를 읽는다`);
   for (const c of a) console.log(line(c));
   const b = bodyless.slice(0, opt.all ? limit : Math.min(limit, BODYLESS_DEFAULT));
   console.log(`\n본문 없는 커밋 (${shown(b.length, bodyless.length)}) — 최근 순, 제목만으로 판단하기 어렵다${b.length < bodyless.length && !opt.all ? ' (더 보려면 --all)' : ''}`);
   for (const c of b) console.log(line(c));
+  if (reverts.length) console.log(`  Revert ${reverts.length}건 — 제목만으로는 판단할 근거가 없어 따로 셌다 (\`git log --grep=^Revert\`)`);
   console.log('  (CI·빌드)·(설정)·(문서) = 바뀐 파일이 그것뿐인 커밋. 설정 변경이면 프로젝트 사정일 때가 많지만 CI·빌드 함정은 배울 거리일 수 있다');
 
   // 주석: 같은 문장을 복사한 곳은 한 번만, 파일 하나에서 많아야 3개 (한 폴더에 쏠리지 않게).
@@ -479,9 +497,20 @@ function cmdHints(ctx, pos, opt) {
     if (caveatFile) docs.push({ head: f, lines: heads });
     else for (const h of heads) docs.push({ head: h, lines: [] });
   }
+  // 경로 순으로 자르면 앞쪽 폴더 하나가 다 차지한다 — 폴더를 번갈아 하나씩 뽑는다.
   const allComments = [...comments.values()];
-  const listed = allComments.filter((c) => !c.skipped).slice(0, limit);
-  console.log(`\n주의·우회 주석 (${shown(listed.length, allComments.length)}) — 같은 문장은 한 번, 파일당 ${COMMENTS_PER_FILE}개까지`);
+  const byDir = new Map();
+  for (const c of allComments.filter((x) => !x.skipped)) {
+    const dir = path.dirname(c.at.replace(/:\d+$/, ''));
+    if (!byDir.has(dir)) byDir.set(dir, []);
+    byDir.get(dir).push(c);
+  }
+  const queues = [...byDir.values()];
+  const listed = [];
+  for (let round = 0; listed.length < limit && queues.some((q) => q.length > round); round++) {
+    for (const q of queues) if (q[round] && listed.length < limit) listed.push(q[round]);
+  }
+  console.log(`\n주의·우회 주석 (${shown(listed.length, allComments.length)}) — 같은 문장은 한 번, 파일당 ${COMMENTS_PER_FILE}개, 폴더를 번갈아`);
   for (const c of listed) console.log(`  ${c.at}  ${c.text}${c.more ? `  (같은 주석 ${c.more}곳 더)` : ''}`);
   const d = docs.slice(0, limit);
   console.log(`\n주의 문서 (${shown(d.length, docs.length)}) — CAVEATS 같은 파일(제목 목록과 함께), md 의 주의·함정 제목`);
@@ -509,7 +538,7 @@ function cmdHints(ctx, pos, opt) {
   }
 
   console.log('\n이건 단서일 뿐이다 — 단서가 가리키는 커밋·코드·문서를 읽고 "다른 프로젝트에서도 통하는" 것만 제안한다.');
-  console.log('단서가 많아도 배울 거리는 0개일 수 있다 — 개수를 채우지 않는다 (rules.md).');
+  console.log('단서가 많아도 배울 거리는 0개일 수 있다 — 개수는 기준이 정한다, 어느 숫자로도 맞추지 않는다 (rules.md).');
 }
 
 // ---------- 진입 ----------

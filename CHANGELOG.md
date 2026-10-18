@@ -7,6 +7,24 @@
 - **MINOR**: 새 규칙·새 명령·새 카테고리·lint 검사 추가 (재설치 후 새 경고가 나올 수 있다)
 - **PATCH**: 판정 정확도 개선·버그 수정·문서
 
+## v0.3.1 — 2026-10-18
+
+> Third pilot round: proposal count is set by the bar (no anchoring on 1 or 3), body length sorts hints again, Revert/ci/folder fixes, `add` takes the date from a commit hash.
+
+세 저장소 3차 파일럿 반영. 재설치만 하면 된다 (색인 형식 변경 없음).
+
+- 규칙: **개수는 기준이 정한다** — 통과한 것은 전부(많아야 3개), 못 하면 0개. 3개로 채우지도, 1개로 줄이지도 않는다.
+  v0.3.0 뒤 세 곳 모두 정확히 1개였다 — "하나뿐이면 하나만" 문구와 파일럿 요청의 압력이 1개로 끌었을 수 있다.
+  대상은 "이번 작업에서 사용자가 접한 것" (이 세션이 처음 알아낸 것만이 아니다).
+- `hints`:
+  - 본문 긴 순을 다시 1순위로, 이유 표현은 같은 길이일 때만 — 이유 표현 순은 세 곳 중 두 곳에서 좋은 후보를 밀어냈다.
+  - 본문 없는 Revert 는 목록 대신 개수만, 본문 없는 커밋은 5개까지.
+  - `ci`·`build` 커밋도 단서 — CI 함정 교훈의 출처가 `ci:` 커밋이었다.
+  - 주석은 폴더를 번갈아 뽑는다 (한 폴더 쏠림).
+  - 완료 일감의 절은 제목이 원인·재현 … 으로 시작할 때만 ("재현하지 않는다" 오인 제거).
+- `add`: 출처가 커밋 해시로 시작하고 `--date` 가 없으면 그 커밋 날짜를 쓴다.
+- README: 로컬 전용 시험에서 CLAUDE.md 가 생성물이면 남는 수정이 없다.
+
 ## v0.3.0 — 2026-10-18
 
 > Second pilot round (3 repos): no quota for proposals, smarter `hints` (why-words first, merge/revert/squash noise removed, file-kind tags, deduped comments, caveat-doc headings, done tickets with cause sections), `add --stdin` arrays, double-date fix.

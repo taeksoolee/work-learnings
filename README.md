@@ -36,7 +36,7 @@ npx -y skills add taeksoolee/work-learnings --skill work-learnings --agent claud
 특정 버전으로 고정하려면 태그를 붙인다 (버전 목록과 변경 내역: [Releases](https://github.com/taeksoolee/work-learnings/releases), [CHANGELOG](CHANGELOG.md)):
 
 ```sh
-npx -y skills add "taeksoolee/work-learnings#v0.3.0" --skill work-learnings --agent claude-code --copy --yes
+npx -y skills add "taeksoolee/work-learnings#v0.3.1" --skill work-learnings --agent claude-code --copy --yes
 ```
 
 `.claude/skills/work-learnings/` 에 복사된다. **설치본은 저장소에 커밋한다** (`skills-lock.json` 도 함께) — 작고,
@@ -75,7 +75,8 @@ docs/learnings/
 skills-lock.json
 ```
 
-진입 블록은 CLAUDE.md 에 넣어야 동작하므로 그 파일만은 수정이 남는다 — 시험이 끝나면 되돌리거나 커밋을 결정한다.
+CLAUDE.md 가 커밋 대상이면 진입 블록 때문에 그 파일만은 수정이 남는다 — 시험이 끝나면 되돌리거나 커밋을 결정한다
+(CLAUDE.md 가 gitignore 된 생성물이면 남는 것이 없다).
 
 **repo-tickets 와 함께 쓸 때**: 설치본(`rules.md` 등)에는 일감 참조 모양(`[[task-…]]` 처럼 실제 이름 꼴)을 두지 않는다
 — 그래서 repo-tickets 버전과 무관하게 설치본이 repo-tickets `lint` 에 걸리지 않는다 (v0.1.0 은 예시가 걸렸다).
@@ -94,7 +95,7 @@ skill 은 description 매칭으로만 로드된다 — "작업 중 배울 만한
 
 - 작업을 마치고 최종 보고할 때, 사용자가 배울 만한 일반화 가능한 교훈이 있었으면 보고 끝에 "배울 거리" 로
   후보를 제안한다 (`[카테고리] 제목 — 왜 한 줄`). 다른 세션이 맡긴 일의 결과 보고도 포함, 중간 확인 질문은 제외.
-- 많아야 3개 — 상한이지 목표가 아니다. 0개가 가장 흔한 정상이고, 그때는 섹션을 쓰지 않는다. 억지로 찾지 않는다.
+- 개수는 기준이 정한다 — 통과한 것만 전부(많아야 3개). 0개면 섹션을 쓰지 않는다. 어느 숫자로도 맞추지 않는다.
 - 기준: "다른 프로젝트에서 같은 상황을 만나면 도움이 되는가". 이 프로젝트만의 결정·할 일·상식은 제외.
 - 기록은 사용자가 고른 것만, work-learnings skill(`.claude/skills/work-learnings/rules.md`)로 한다.
 ```
