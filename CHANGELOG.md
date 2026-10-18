@@ -7,6 +7,23 @@
 - **MINOR**: 새 규칙·새 명령·새 카테고리·lint 검사 추가 (재설치 후 새 경고가 나올 수 있다)
 - **PATCH**: 판정 정확도 개선·버그 수정·문서
 
+## v0.2.0 — 2026-10-18
+
+> Pilot feedback: installed files no longer trip repo-tickets lint, richer `hints` (commit bodies first, done tickets, `--since`), `add --stdin`, leaner index.
+
+두 저장소 파일럿 피드백 반영. **재설치 후 `lint --fix` 한 번** — 색인 형식이 바뀌어 그 전까지 `lint` 가 색인 불일치 오류를 낸다.
+
+- 수정: `rules.md` 예시의 일감 참조가 repo-tickets(v0.3.3 이하) `lint` 에서 "없는 일감 참조" 오류가 됐다 —
+  설치본에 일감 참조 모양을 두지 않는다 (테스트로 고정).
+- `hints`: 본문 있는 커밋을 먼저(본문 줄 수 표시), `perf`·`refactor` 포함, `docs`·`chore` 등 제외, `--since`.
+  주석은 주석 안 어디든 `함정`·`조용히`·`깨진다` 도 잡는다. repo-tickets 의 `docs/tickets/done/` 완료 일감을 최근 순으로.
+- `add --stdin`: 필드를 JSON 으로 — 백틱·`${…}` 를 셸 이스케이프 없이.
+- 제목에 ` — ` 가 있으면 `add` 거부·`lint` 경고 — 제안의 `제목 — 왜` 를 통째로 제목에 넣는 실수.
+- 색인: 항목이 있는 카테고리만 표로, 빈 카테고리는 한 줄로.
+- 규칙: 제목은 배운 것 하나(60자 안팎), 출처 날짜는 그 일이 있던 날, 특정 버전 도구 함정은 `언제` 에 버전 범위,
+  "보고" 에는 다른 세션이 맡긴 일의 결과 보고도 포함.
+- README: 설치·`init` 을 먼저 커밋한 뒤 기록, repo-tickets 와 함께 쓸 때.
+
 ## v0.1.0 — 2026-10-18
 
 > First release: propose-then-approve learnings in `docs/learnings/<category>.md`, 11 standard categories, script with lint and repo hints.

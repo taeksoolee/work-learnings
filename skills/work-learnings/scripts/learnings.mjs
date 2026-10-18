@@ -27,14 +27,22 @@ const ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const FIELDS = ['왜', '언제', '출처'];
 const FIELD_RE = /^- (왜|언제|출처):\s*(.*)$/;
+const TITLE_DASH_RE = /\s[—–]\s/;
 const INDEX_MARK = '<!-- work-learnings index — 스크립트가 생성한다. 손으로 고치지 말고 `lint --fix` -->';
 const EXTRA_HEADING = '## 추가 카테고리';
 const EXTRA_ROW_RE = /^\| `([a-z0-9-]+)` \| (.*?) \| (.*?) \|$/;
 
 // hints: 배움이 숨어 있기 쉬운 곳. 판정이 아니라 AI 가 읽어 볼 단서 목록이다.
-const HINT_COMMIT_RE = /^(?:fix|hotfix|revert)\b|^Revert "|workaround|우회|되돌림|원인/i;
-const HINT_COMMENT_RE = /(?:\/\/|\/\*|<!--|#|^\s*\*|^\s*--)\s*(?:@?(?:HACK|WORKAROUND|XXX|GOTCHA|CAVEAT)\b|주의|우회|함정)/i;
+// 커밋: 고친·되돌린·다시 짠 커밋. 문서·잡일 커밋은 "원인"·"우회" 같은 말이 들어 있어도 뺀다.
+const HINT_COMMIT_RE = /^(?:fix|hotfix|revert|perf|refactor)\b|^Revert "|workaround|우회|되돌림|원인/i;
+const HINT_COMMIT_SKIP_RE = /^(?:docs|chore|style|ci|build|test)\b/i;
+// 주석: 주석 기호 바로 뒤의 표지(HACK·주의 …), 또는 주석 안 어디든 "왜" 를 적을 때 흔한 말(함정·조용히·깨진다).
+const COMMENT_START = '(?:\\/\\/|\\/\\*|<!--|#|^\\s*\\*|^\\s*--)';
+const HINT_COMMENT_RE = new RegExp(`${COMMENT_START}\\s*(?:@?(?:HACK|WORKAROUND|XXX|GOTCHA|CAVEAT)\\b|주의|우회|함정)|${COMMENT_START}.*(?:함정|조용히|깨진다|깨짐)`, 'i');
 const HINT_SKIP_RE = /(^|\/)(?:\.claude\/skills|skills\/work-learnings|node_modules)\//;
+// repo-tickets 의 완료 일감 (`<YYYYMMDD>_<우선순위>_<이름>.md` 또는 에픽 디렉터리)
+const DONE_DIR = 'docs/tickets/done';
+const DONE_ENTRY_RE = /^\d{8}_\d{3}_[a-z]+-[a-z0-9-]+(\.md)?$/;
 
 // ---------- 공통 ----------
 
@@ -74,6 +82,7 @@ function rel(ctx, p) {
 
 function oneLine(opt, key) {
   const v = opt[key];
+  if (typeof v === 'number') return String(v);
   if (typeof v !== 'string' || !v.trim()) fail(`--${key} 가 필요하다`);
   if (/\n/.test(v)) fail(`--${key} 는 한 줄로`);
   return v.trim();
@@ -189,15 +198,15 @@ function renderIndex(ctx, cats, items) {
     '',
     '**읽는 법**: 항목 제목(`##`)이 곧 배운 것이다. 제목만 훑고, 필요한 것만 `왜`·`언제` 를 읽는다.',
     '',
-    '| 카테고리 | 범위 | 항목 |',
-    '|---|---|---|',
-    // 아직 없는 파일은 링크하지 않는다 (깨진 링크가 된다)
-    ...cats.map((c) => {
-      const name = fs.existsSync(path.join(ctx.dir, `${c.id}.md`)) ? `[\`${c.id}\`](${c.id}.md)` : `\`${c.id}\``;
-      return `| ${name} | ${c.scope} | ${count(c.id)} |`;
-    }),
-    '',
   ];
+  // 항목이 있는 카테고리만 표로. 나머지는 한 줄 — 표준 목록은 보이되 빈 행으로 시끄럽지 않게.
+  const filled = cats.filter((c) => count(c.id));
+  if (filled.length) {
+    lines.push('| 카테고리 | 범위 | 항목 |', '|---|---|---|',
+      ...filled.map((c) => `| [\`${c.id}\`](${c.id}.md) | ${c.scope} | ${count(c.id)} |`), '');
+  }
+  const empty = cats.filter((c) => !count(c.id));
+  if (empty.length) lines.push(`아직 항목이 없는 카테고리: ${empty.map((c) => `\`${c.id}\``).join(' · ')}`, '');
   const extra = cats.filter((c) => c.reason);
   if (extra.length) {
     lines.push(EXTRA_HEADING, '', '기본 카테고리 어디에도 맞지 않는 항목이 3개 이상 쌓여 추가했다.', '',
@@ -224,13 +233,23 @@ function cmdInit(ctx) {
   console.log(`${text === null ? '색인 생성' : '색인 갱신'}: ${rel(ctx, readme)}`);
 }
 
-function cmdAdd(ctx, pos, opt) {
+// --stdin: 필드를 JSON 으로 받는다 — 백틱·`${…}` 를 셸 이스케이프 없이 넣을 수 있게.
+function readStdinFields(opt) {
+  let data;
+  try { data = JSON.parse(fs.readFileSync(0, 'utf8')); } catch { fail('--stdin 은 JSON 객체 {"category","title","why","when","source","date"?}'); }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) fail('--stdin 은 JSON 객체');
+  return { ...data, ...Object.fromEntries(Object.entries(opt).filter(([k]) => k !== 'stdin')) };
+}
+
+function cmdAdd(ctx, pos, rawOpt) {
   requireInit(ctx);
+  const opt = rawOpt.stdin ? readStdinFields(rawOpt) : rawOpt;
   const { cats, items } = load(ctx);
   const category = oneLine(opt, 'category');
   if (!cats.some((c) => c.id === category)) fail(`모르는 카테고리: ${category} — ${cats.map((c) => c.id).join(', ')}`);
   const title = oneLine(opt, 'title');
   if (/[?？]$/.test(title)) fail('제목은 질문형이 아니라 배운 것을 한 줄 규칙으로');
+  if (TITLE_DASH_RE.test(title)) fail("제목에 ' — ' 가 있다 — 제안의 '제목 — 왜' 에서 뒤쪽은 --why 로 (제목은 배운 것 하나)");
   const why = oneLine(opt, 'why');
   const when = oneLine(opt, 'when');
   const source = oneLine(opt, 'source');
@@ -306,6 +325,7 @@ function cmdLint(ctx, pos, opt) {
       if (s && !DATE_RE.test(s.split(',')[0].trim())) add('error', at(it), `출처는 날짜로 시작한다 — '- 출처: YYYY-MM-DD, …' ('${s}')`);
     }
     if (/[?？]$/.test(it.title)) add('warn', at(it), '질문형 제목 — 배운 것을 한 줄 규칙으로');
+    if (TITLE_DASH_RE.test(it.title)) add('warn', at(it), "제목에 ' — ' — 이유·조건은 '왜'·'언제' 로 옮기고 제목은 배운 것 하나로");
     for (const prev of items.slice(0, i)) {
       if (normalize(prev.title) === normalize(it.title)) add('error', at(it), `같은 제목: ${at(prev)} — 한 항목으로 합친다`);
       else if (isSimilar(prev.title, it.title)) add('warn', at(it), `비슷한 제목: ${at(prev)} '${prev.title}' — 같은 교훈이면 합친다`);
@@ -331,14 +351,21 @@ function cmdHints(ctx, pos, opt) {
   const limit = opt.limit === undefined ? 30 : Number(opt.limit);
   if (!Number.isInteger(limit) || limit < 1) fail('--limit 은 1 이상의 정수');
   const git = (...args) => {
-    try { return execFileSync('git', ['-C', ctx.root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 << 20 }); }
+    try { return execFileSync('git', ['-C', ctx.root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 256 << 20 }); }
     catch { fail('git 저장소에서만 쓸 수 있다'); }
   };
 
-  const commits = git('log', '--format=%h%x09%ad%x09%s', '--date=short').split('\n')
-    .filter((l) => l && HINT_COMMIT_RE.test(l.split('\t')[2] ?? '')).slice(0, limit);
-  console.log(`\n고친·되돌린 커밋 (${commits.length}) — 본문에 "왜" 가 있으면 \`git show <해시>\``);
-  for (const l of commits) console.log(`  ${l.replaceAll('\t', '  ')}`);
+  // 본문에 "왜" 가 적힌 커밋이 가장 좋은 단서다 — 본문 있는 것 먼저(최근 순), 본문 없는 것은 뒤로.
+  const since = typeof opt.since === 'string' ? [`--since=${opt.since}`] : [];
+  const commits = git('log', ...since, '--date=short', '--format=%x1e%h%x1f%ad%x1f%s%x1f%b').split('\x1e').slice(1)
+    .map((rec) => {
+      const [hash, date, subject, body = ''] = rec.split('\x1f');
+      return { hash, date, subject, bodyLines: body.split('\n').filter((l) => l.trim() && !/^[\w-]+: .+@/.test(l)).length };
+    })
+    .filter((c) => HINT_COMMIT_RE.test(c.subject) && !HINT_COMMIT_SKIP_RE.test(c.subject));
+  const picked = [...commits.filter((c) => c.bodyLines), ...commits.filter((c) => !c.bodyLines)].slice(0, limit);
+  console.log(`\n고친·되돌린 커밋 (${picked.length}) — 본문 있는 것 먼저, \`git show <해시>\` 로 "왜" 를 읽는다`);
+  for (const c of picked) console.log(`  ${c.hash}  ${c.date}  ${c.subject}${c.bodyLines ? `  (본문 ${c.bodyLines}줄)` : ''}`);
 
   const learnings = rel(ctx, ctx.dir);
   const comments = [];
@@ -356,6 +383,21 @@ function cmdHints(ctx, pos, opt) {
   console.log(`\n주의·우회 주석 (${comments.length})`);
   for (const c of comments) console.log(`  ${c}`);
 
+  // repo-tickets 를 함께 쓰면 완료 일감의 "원인"·진행 로그가 가장 진한 단서다.
+  const doneDir = path.join(ctx.root, DONE_DIR);
+  if (fs.existsSync(doneDir)) {
+    const done = fs.readdirSync(doneDir, { withFileTypes: true })
+      .filter((e) => DONE_ENTRY_RE.test(e.name) && e.isDirectory() !== e.name.endsWith('.md'))
+      .map((e) => {
+        const file = path.join(doneDir, e.name, ...(e.isDirectory() ? ['README.md'] : []));
+        return { file, title: (readText(file) ?? '').match(/^# (.+)$/m)?.[1] ?? '' };
+      })
+      .sort((a, b) => path.relative(doneDir, b.file).localeCompare(path.relative(doneDir, a.file)))
+      .slice(0, limit);
+    console.log(`\n완료 일감 (${done.length}) — 최근 것부터, "원인"·진행 로그를 읽는다`);
+    for (const t of done) console.log(`  ${rel(ctx, t.file)}  ${t.title}`);
+  }
+
   console.log('\n이건 단서일 뿐이다 — 읽어 보고 "다른 프로젝트에서도 통하는" 것만 배울 거리로 제안한다 (rules.md).');
 }
 
@@ -365,10 +407,11 @@ const USAGE = `work-learnings v${VERSION} — docs/learnings/ 배움 기록 (규
 
   init
   add --category <id> --title "<배운 것 한 줄>" --why "<왜>" --when "<언제>" --source "<일감·커밋·작업>" [--date YYYY-MM-DD] [--force]
+  add --stdin [--force]    (필드를 JSON 으로: {"category","title","why","when","source","date"?})
   list [<카테고리>]
   lint [--fix]
   category <id> --scope "<범위>" --reason "<근거>"
-  hints [--limit N]
+  hints [--limit N] [--since <날짜|"6 months ago">]
 
 공통 옵션: --root <저장소 루트> (기본: 현재 디렉터리), --dir <learnings 폴더> (기본: docs/learnings)`;
 

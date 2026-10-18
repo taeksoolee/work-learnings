@@ -36,7 +36,7 @@ npx -y skills add taeksoolee/work-learnings --skill work-learnings --agent claud
 특정 버전으로 고정하려면 태그를 붙인다 (버전 목록과 변경 내역: [Releases](https://github.com/taeksoolee/work-learnings/releases), [CHANGELOG](CHANGELOG.md)):
 
 ```sh
-npx -y skills add "taeksoolee/work-learnings#v0.1.0" --skill work-learnings --agent claude-code --copy --yes
+npx -y skills add "taeksoolee/work-learnings#v0.2.0" --skill work-learnings --agent claude-code --copy --yes
 ```
 
 `.claude/skills/work-learnings/` 에 복사된다. **설치본은 저장소에 커밋한다** (`skills-lock.json` 도 함께) — 작고,
@@ -62,6 +62,13 @@ npx -y skills add "taeksoolee/work-learnings#v0.1.0" --skill work-learnings --ag
 node .claude/skills/work-learnings/scripts/learnings.mjs init
 ```
 
+설치·`init` 을 먼저 커밋하고 나서 기록(`add`)한다 — `add` 가 색인을 갱신하므로, 순서가 섞이면 설치 커밋의 색인이
+그 커밋의 항목과 어긋난다. 재설치(업데이트) 뒤 색인 형식이 바뀌었으면 `lint` 가 알려 준다 — `lint --fix`.
+
+**repo-tickets 와 함께 쓸 때**: 설치본(`rules.md` 등)에는 일감 참조 모양(`[[task-…]]` 처럼 실제 이름 꼴)을 두지 않는다
+— 그래서 repo-tickets 버전과 무관하게 설치본이 repo-tickets `lint` 에 걸리지 않는다 (v0.1.0 은 예시가 걸렸다).
+repo-tickets v0.3.4 부터는 설치된 skill 폴더 자체를 검사하지 않는다.
+
 ## 진입 블록
 
 skill 은 description 매칭으로만 로드된다 — "작업 중 배울 만한 게 생겼을 때" 같은 조건으로는 저절로 켜지지 않는다.
@@ -73,12 +80,14 @@ skill 은 description 매칭으로만 로드된다 — "작업 중 배울 만한
 
 - 작업을 마치고 보고할 때, 사용자가 배울 만한 일반화 가능한 교훈이 있었으면 보고 끝에 "배울 거리" 로
   후보를 제안한다 (`[카테고리] 제목 — 왜 한 줄`, 많아야 3개). 없으면 쓰지 않는다.
+  다른 세션이 맡긴 일의 결과 보고도 보고다.
 - 기준: "다른 프로젝트에서 같은 상황을 만나면 도움이 되는가". 이 프로젝트만의 결정·할 일·상식은 제외.
 - 기록은 사용자가 고른 것만, work-learnings skill(`.claude/skills/work-learnings/rules.md`)로 한다.
 ```
 
-repo-tickets 와 함께 쓰면 두 진입 블록을 나란히 둔다. 출처에 일감 참조(`[[task-…]]`)를 쓰면 repo-tickets `lint` 가
-그 참조도 검사한다 — 없는 일감이면 오류다. 의도된 동작이다 (일감 이름은 바뀌지 않으므로 깨진 참조는 실수다).
+repo-tickets 와 함께 쓰면 두 진입 블록을 나란히 둔다. 기록의 출처에 일감 참조(`[[이름]]`)를 쓰면 repo-tickets `lint` 가
+`docs/learnings/` 의 그 참조도 검사한다 — 없는 일감이면 오류다. 의도된 동작이다 (일감 이름은 바뀌지 않으므로 깨진 참조는 실수다).
+skill 설치본 자체는 이 검사에 걸리지 않는다 (위 "설치").
 
 ## CI (선택)
 
