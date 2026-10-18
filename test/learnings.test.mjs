@@ -323,7 +323,9 @@ test('hints: 배움이 숨어 있기 쉬운 커밋·주석·완료 일감을 나
   assert.match(one, /본문 없는 커밋 \(1\)/);
   assert.match(one, /완료 일감 \(1\/3\)/);
   assert.match(ok(d, 'hints', '--since', '2000-01-01'), /fix: 모바일/);
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  // 로컬 날짜로 — toISOString 은 UTC 라서 KST 자정~09시에는 "내일" 이 오늘과 같아진다
+  const t = new Date(Date.now() + 86400000);
+  const tomorrow = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
   assert.match(ok(d, 'hints', '--since', tomorrow), /본문 있는 커밋 \(0\)/);
 });
 
@@ -460,6 +462,15 @@ test('add: 출처가 커밋 해시로 시작하고 --date 가 없으면 그 커�
   // 찾을 수 없는 해시면 오늘 날짜로 쓰고 알려 준다
   const miss = ok(d, 'add', '--category', 'git', '--title', '없는 커밋을 가리킨 항목', '--why', 'w', '--when', 'n', '--source', 'deadbeef0 작업');
   assert.match(miss, /커밋 deadbeef0 을 찾지 못했다 — 오늘 날짜로/);
+});
+
+// 최종 보고를 쓰는 순간에는 진입 블록만 보인다 — 판단 기준과 훑을 곳이 블록에서 빠지면 제안이 0개로 끝나기 쉽다.
+test('README 진입 블록에 훑을 곳과 판단 기준이 있다', () => {
+  const readme = fs.readFileSync(path.resolve(path.dirname(SCRIPT), '../../../README.md'), 'utf8');
+  const block = readme.match(/```markdown\n## 배울 거리 \(work-learnings\)\n([\s\S]*?)```/)?.[1] ?? '';
+  for (const must of ['최종 보고', '훑는다', '잘못 읽을 뻔한 출력', '사용자가 이번에 접한 것', '시간을 잃었을까', '통과한 것은 전부', '사용자가 고른 것만']) {
+    assert.ok(block.includes(must), `진입 블록에 '${must}' 가 없다`);
+  }
 });
 
 // 설치본이 repo-tickets lint 에 걸리면 안 된다 — 같이 설치된 저장소에서 없는 일감 참조 오류가 된다.

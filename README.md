@@ -36,7 +36,7 @@ npx -y skills add taeksoolee/work-learnings --skill work-learnings --agent claud
 특정 버전으로 고정하려면 태그를 붙인다 (버전 목록과 변경 내역: [Releases](https://github.com/taeksoolee/work-learnings/releases), [CHANGELOG](CHANGELOG.md)):
 
 ```sh
-npx -y skills add "taeksoolee/work-learnings#v0.3.1" --skill work-learnings --agent claude-code --copy --yes
+npx -y skills add "taeksoolee/work-learnings#v0.3.2" --skill work-learnings --agent claude-code --copy --yes
 ```
 
 `.claude/skills/work-learnings/` 에 복사된다. **설치본은 저장소에 커밋한다** (`skills-lock.json` 도 함께) — 작고,
@@ -93,12 +93,17 @@ skill 은 description 매칭으로만 로드된다 — "작업 중 배울 만한
 ```markdown
 ## 배울 거리 (work-learnings)
 
-- 작업을 마치고 최종 보고할 때, 사용자가 배울 만한 일반화 가능한 교훈이 있었으면 보고 끝에 "배울 거리" 로
-  후보를 제안한다 (`[카테고리] 제목 — 왜 한 줄`). 다른 세션이 맡긴 일의 결과 보고도 포함, 중간 확인 질문은 제외.
-- 개수는 기준이 정한다 — 통과한 것만 전부(많아야 3개). 0개면 섹션을 쓰지 않는다. 어느 숫자로도 맞추지 않는다.
-- 기준: "다른 프로젝트에서 같은 상황을 만나면 도움이 되는가". 이 프로젝트만의 결정·할 일·상식은 제외.
+- 작업을 마치고 최종 보고할 때, 보고 끝에 "배울 거리" 후보를 제안한다 (`[카테고리] 제목 — 왜 한 줄`).
+  다른 세션이 맡긴 일의 결과 보고도 포함, 중간 확인 질문은 제외.
+- 보고 직전에 이번 작업을 한 번 훑는다: 처음 써 본 명령·플래그·기법, 잘못 읽을 뻔한 출력,
+  막혔다가 풀린 지점, 겪을 뻔한 함정. 이 세션이 새로 알아낸 것만이 아니라 사용자가 이번에 접한 것이 대상이다.
+- 기준: "다른 프로젝트에서 이걸 몰랐다면 실제로 시간을 잃었을까". 통과한 것은 전부(많아야 3개), 없으면 섹션을 쓰지 않는다.
+  이 프로젝트만의 결정·할 일·상식은 제외.
 - 기록은 사용자가 고른 것만, work-learnings skill(`.claude/skills/work-learnings/rules.md`)로 한다.
 ```
+
+**판단 기준은 이 블록에 있어야 한다.** 최종 보고를 쓰는 순간에 보이는 것은 진입 블록뿐이다 — rules.md 는 skill 이
+로드될 때(기록·검사할 때)만 읽힌다. 블록을 줄이거나 고칠 때 "어디를 훑을지" 와 기준 문장을 빼지 않는다.
 
 repo-tickets 와 함께 쓰면 두 진입 블록을 나란히 둔다. 기록의 출처에 일감 참조(`[[이름]]`)를 쓰면 repo-tickets `lint` 가
 `docs/learnings/` 의 그 참조도 검사한다 — 없는 일감이면 오류다. 의도된 동작이다 (일감 이름은 바뀌지 않으므로 깨진 참조는 실수다).

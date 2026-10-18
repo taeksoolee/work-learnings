@@ -7,6 +7,20 @@
 - **MINOR**: 새 규칙·새 명령·새 카테고리·lint 검사 추가 (재설치 후 새 경고가 나올 수 있다)
 - **PATCH**: 판정 정확도 개선·버그 수정·문서
 
+## v0.3.2 — 2026-10-19
+
+> Entry block now carries the judgment itself: what to scan before the final report, and the "would you have lost time" bar.
+
+진입 블록 문구 변경 — **쓰는 저장소는 CLAUDE.md·AGENTS.md 의 블록을 README "진입 블록" 으로 바꿔 넣는다.** 스크립트 변경 없음.
+
+- v0.3.1 에서 배울 거리가 2개 있던 작업을 0개로 보고한 사례: "0개가 정상", "어느 숫자로도 맞추지 않는다" 만 진입 블록에 있고
+  "대상은 사용자가 이번에 접한 것" 은 rules.md 에만 있었다. 최종 보고를 쓸 때는 진입 블록만 보인다.
+- 진입 블록: 보고 직전에 훑을 곳(처음 써 본 명령·플래그·기법, 잘못 읽을 뻔한 출력, 막혔다가 풀린 지점, 겪을 뻔한 함정),
+  "사용자가 이번에 접한 것이 대상", 기준 "몰랐다면 실제로 시간을 잃었을까", "통과한 것은 전부(많아야 3개)".
+  문턱만 올리던 "0개가 가장 흔한 정상"·"어느 숫자로도 맞추지 않는다" 는 진입 블록에서 뺐다 (rules.md 에는 남는다).
+- rules.md: 보고 직전 훑기, 판단 기준이 진입 블록에도 있어야 하는 이유.
+- 테스트: 진입 블록에 훑을 곳·기준 문장이 있는지 고정. `--since` 테스트가 UTC 날짜를 써서 KST 자정~09시에 실패하던 문제 수정.
+
 ## v0.3.1 — 2026-10-18
 
 > Third pilot round: proposal count is set by the bar (no anchoring on 1 or 3), body length sorts hints again, Revert/ci/folder fixes, `add` takes the date from a commit hash.
