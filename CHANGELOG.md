@@ -7,6 +7,28 @@
 - **MINOR**: 새 규칙·새 명령·새 카테고리·lint 검사 추가 (재설치 후 새 경고가 나올 수 있다)
 - **PATCH**: 판정 정확도 개선·버그 수정·문서
 
+## v0.3.0 — 2026-10-18
+
+> Second pilot round (3 repos): no quota for proposals, smarter `hints` (why-words first, merge/revert/squash noise removed, file-kind tags, deduped comments, caveat-doc headings, done tickets with cause sections), `add --stdin` arrays, double-date fix.
+
+세 저장소 2차 파일럿 피드백 반영. **재설치 후 `lint --fix` 한 번** — `devops-ci` 범위가 바뀌어 색인이 달라진다.
+v0.2.0 이하 `add` 로 기록한 항목은 `lint` 에 "출처에 날짜가 둘" 경고가 나올 수 있다 — 날짜 하나로 고친다.
+
+- 수정: `--source` 가 날짜로 시작하면 날짜가 두 번 붙던 문제 — `add` 가 거부(날짜는 `--date`), `lint` 가 경고.
+- 규칙: **개수는 상한이지 목표가 아니다** — 0개가 정상, 후보마다 "몰랐다면 실제로 시간을 잃었을까" 확인,
+  "더" 요청도 기준을 통과한 것만. 제안은 최종 보고에만(중간 확인 질문 제외). 제목에 백틱·「」 허용.
+  단서가 가리키는 문서도 읽는다.
+- `devops-ci` 범위에 개발 도구(셸·스크립트·로컬 도구 설정) 포함.
+- `add --stdin` 이 JSON 배열을 받는다 — 하나라도 걸리면 아무것도 쓰지 않고, 몇 번째 항목인지 알려 준다.
+- `hints`:
+  - 커밋: 이유 표현(`때문`·`원인`·`조용히`·`because` …)이 많은 본문 먼저, 그다음 본문 긴 순. 머지 커밋 제외,
+    Revert 자동 본문·스쿼시의 하위 커밋 제목 나열·트레일러는 본문으로 치지 않는다.
+  - `(설정·문서만)` → `(CI·빌드)`·`(설정)`·`(문서)` 로 나눔. `(CI·빌드)` 는 배울 거리인 경우가 많다.
+  - 주석: 같은 문장은 한 번(`같은 주석 N곳 더`), 파일당 3개, 점으로 시작하는 다른 도구 폴더 제외(`.github` 는 본다),
+    잘리면 `(보인 수/전체)`.
+  - 주의 문서 파일은 제목 목록·줄 번호와 함께. 완료 일감은 `원인`·`재현`·`배운 것` 절이 있는 것 먼저, 절 이름·줄 수 표시.
+- README: CLAUDE.md 가 생성물이면 생성원에 진입 블록, 로컬에서만 시험할 때 `.git/info/exclude`.
+
 ## v0.2.0 — 2026-10-18
 
 > Pilot feedback: installed files no longer trip repo-tickets lint, richer `hints` (commit bodies first, done tickets, `--since`), `add --stdin`, leaner index.

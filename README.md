@@ -36,7 +36,7 @@ npx -y skills add taeksoolee/work-learnings --skill work-learnings --agent claud
 특정 버전으로 고정하려면 태그를 붙인다 (버전 목록과 변경 내역: [Releases](https://github.com/taeksoolee/work-learnings/releases), [CHANGELOG](CHANGELOG.md)):
 
 ```sh
-npx -y skills add "taeksoolee/work-learnings#v0.2.0" --skill work-learnings --agent claude-code --copy --yes
+npx -y skills add "taeksoolee/work-learnings#v0.3.0" --skill work-learnings --agent claude-code --copy --yes
 ```
 
 `.claude/skills/work-learnings/` 에 복사된다. **설치본은 저장소에 커밋한다** (`skills-lock.json` 도 함께) — 작고,
@@ -65,6 +65,18 @@ node .claude/skills/work-learnings/scripts/learnings.mjs init
 설치·`init` 을 먼저 커밋하고 나서 기록(`add`)한다 — `add` 가 색인을 갱신하므로, 순서가 섞이면 설치 커밋의 색인이
 그 커밋의 항목과 어긋난다. 재설치(업데이트) 뒤 색인 형식이 바뀌었으면 `lint` 가 알려 준다 — `lint --fix`.
 
+**로컬에서만 시험할 때** (팀 저장소라 아직 커밋하지 않을 때): 설치본·기록·`skills-lock.json` 을
+`.git/info/exclude` 에 넣으면 커밋 대상에 섞이지 않는다 (저장소의 `.gitignore` 는 건드리지 않는다).
+
+```gitignore
+# .git/info/exclude
+.claude/skills/work-learnings/
+docs/learnings/
+skills-lock.json
+```
+
+진입 블록은 CLAUDE.md 에 넣어야 동작하므로 그 파일만은 수정이 남는다 — 시험이 끝나면 되돌리거나 커밋을 결정한다.
+
 **repo-tickets 와 함께 쓸 때**: 설치본(`rules.md` 등)에는 일감 참조 모양(`[[task-…]]` 처럼 실제 이름 꼴)을 두지 않는다
 — 그래서 repo-tickets 버전과 무관하게 설치본이 repo-tickets `lint` 에 걸리지 않는다 (v0.1.0 은 예시가 걸렸다).
 repo-tickets v0.3.4 부터는 설치된 skill 폴더 자체를 검사하지 않는다.
@@ -73,14 +85,16 @@ repo-tickets v0.3.4 부터는 설치된 skill 폴더 자체를 검사하지 않�
 
 skill 은 description 매칭으로만 로드된다 — "작업 중 배울 만한 게 생겼을 때" 같은 조건으로는 저절로 켜지지 않는다.
 그래서 제안 트리거는 항상 로드되는 문서에 넣는다. Claude Code 는 `CLAUDE.md`, 그 밖의 도구는 `AGENTS.md`.
+그 파일이 **생성물**(셋업 스크립트가 만드는 포인터, gitignore 대상)이면 생성원 — 그 파일이 가리키는 정본
+(예: `AI.md`) — 에 넣는다. 생성물에 넣으면 팀에 공유되지 않고 다시 생성할 때 덮어써진다.
 문서 색인 목록이 있으면 거기에 `` [`docs/learnings/`](docs/learnings/) — 배운 것 (규칙은 아래 "배울 거리") `` 를 더한다.
 
 ```markdown
 ## 배울 거리 (work-learnings)
 
-- 작업을 마치고 보고할 때, 사용자가 배울 만한 일반화 가능한 교훈이 있었으면 보고 끝에 "배울 거리" 로
-  후보를 제안한다 (`[카테고리] 제목 — 왜 한 줄`, 많아야 3개). 없으면 쓰지 않는다.
-  다른 세션이 맡긴 일의 결과 보고도 보고다.
+- 작업을 마치고 최종 보고할 때, 사용자가 배울 만한 일반화 가능한 교훈이 있었으면 보고 끝에 "배울 거리" 로
+  후보를 제안한다 (`[카테고리] 제목 — 왜 한 줄`). 다른 세션이 맡긴 일의 결과 보고도 포함, 중간 확인 질문은 제외.
+- 많아야 3개 — 상한이지 목표가 아니다. 0개가 가장 흔한 정상이고, 그때는 섹션을 쓰지 않는다. 억지로 찾지 않는다.
 - 기준: "다른 프로젝트에서 같은 상황을 만나면 도움이 되는가". 이 프로젝트만의 결정·할 일·상식은 제외.
 - 기록은 사용자가 고른 것만, work-learnings skill(`.claude/skills/work-learnings/rules.md`)로 한다.
 ```

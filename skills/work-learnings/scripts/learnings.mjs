@@ -16,7 +16,7 @@ const CATEGORIES = [
   ['backend-api', 'API 설계·인증·에러 계약·서버 런타임'],
   ['data', 'DB·스키마·마이그레이션·쿼리'],
   ['testing', '테스트 전략·재현·회귀'],
-  ['devops-ci', '빌드·배포·CI·인프라'],
+  ['devops-ci', '빌드·배포·CI·인프라·개발 도구'],
   ['git', '브랜치·커밋·히스토리 다루기'],
   ['ai-collab', 'AI·에이전트와 일하는 방법'],
   ['architecture', '구조·경계·의존성'],
@@ -28,28 +28,48 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const FIELDS = ['왜', '언제', '출처'];
 const FIELD_RE = /^- (왜|언제|출처):\s*(.*)$/;
 const TITLE_DASH_RE = /\s[—–]\s/;
+const LEADING_DATE_RE = /^\d{4}-\d{2}-\d{2}\b/;
+const DOUBLE_DATE_RE = /^\d{4}-\d{2}-\d{2},\s*\d{4}-\d{2}-\d{2}\b/;
 const INDEX_MARK = '<!-- work-learnings index — 스크립트가 생성한다. 손으로 고치지 말고 `lint --fix` -->';
 const EXTRA_HEADING = '## 추가 카테고리';
 const EXTRA_ROW_RE = /^\| `([a-z0-9-]+)` \| (.*?) \| (.*?) \|$/;
 
 // hints: 배움이 숨어 있기 쉬운 곳. 판정이 아니라 AI 가 읽어 볼 단서 목록이다.
-// 커밋: 고친·되돌린·다시 짠 커밋. 문서·잡일 커밋은 "원인"·"우회" 같은 말이 들어 있어도 뺀다.
+// 커밋: 고친·되돌린·다시 짠 커밋. 문서·잡일 커밋은 "원인"·"우회" 같은 말이 들어 있어도 뺀다. 머지 커밋은 보지 않는다.
 const HINT_COMMIT_RE = /^(?:fix|hotfix|revert|perf|refactor)\b|^Revert "|workaround|우회|되돌림|원인/i;
 const HINT_COMMIT_SKIP_RE = /^(?:docs|chore|style|ci|build|test)\b/i;
+// 본문으로 치지 않는 줄: 트레일러(Co-Authored-By 등), Revert 자동 본문, 스쿼시 본문의 하위 커밋 제목 나열.
+const BODY_NOISE_RE = [
+  /^[\w-]+: .*(?:@|\b[0-9a-f]{7,}\b)/i, // Co-Authored-By: …<…@…>, Change-Id: I0a1b…
+  /^(?:Signed-off-by|Reviewed-by|Acked-by|Tested-by|Refs?|Closes|Fixes):/i,
+  /^This reverts commit [0-9a-f]+/i,
+  /^\(cherry picked from commit [0-9a-f]+\)/i,
+  /^\s*[*-]\s+(?:(?:feat|fix|hotfix|refactor|perf|docs|chore|style|ci|build|test|revert)(?:\([^)]*\))?!?:|Merge |Revert )/i,
+];
+// "왜" 를 적을 때 흔한 표현. 본문 길이는 교훈 밀도가 아니라 변경 규모를 따라가서, 이 표현이 많은 본문을 먼저 보인다.
+const WHY_RE = /왜|때문|원인|함정|조용히|대신|그래서|않아서|깨지|깨진|because|otherwise|instead|so that|caused|root cause|silently/gi;
 // 주석: 주석 기호 바로 뒤의 표지(HACK·주의 …), 또는 주석 안 어디든 "왜" 를 적을 때 흔한 말(함정·조용히·깨진다).
 const COMMENT_START = '(?:\\/\\/|\\/\\*|<!--|#|^\\s*\\*|^\\s*--)';
 const HINT_COMMENT_RE = new RegExp(`${COMMENT_START}\\s*(?:@?(?:HACK|WORKAROUND|XXX|GOTCHA|CAVEAT)\\b|주의|우회|함정)|${COMMENT_START}.*(?:함정|조용히|깨진다|깨짐)`, 'i');
-const HINT_SKIP_RE = /(^|\/)(?:\.claude\/skills|skills\/work-learnings|node_modules)\//;
-// 바뀐 파일이 전부 이것뿐인 커밋은 "(설정·문서만)" 으로 표시한다 — 프로젝트 설정 변경일 때가 많다 (빼지는 않는다).
-const CONFIG_FILE_RE = /(?:^|\/)(?:package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|\.env[^/]*|\.gitignore|\.\w+rc(?:\.\w+)?|[^/]+\.config\.\w+|[^/]+\.(?:toml|ya?ml|ini|cfg|conf|md)|Dockerfile[^/]*|docker-compose[^/]*)$/i;
+const MD_COMMENT_RE = /<!--\s*(?:@?(?:HACK|WORKAROUND|XXX|GOTCHA|CAVEAT)\b|주의|우회|함정)|<!--.*(?:함정|조용히|깨진다|깨짐)/i;
+// 설치된 skill·다른 도구의 폴더(`.borrow-practice/` 처럼 점으로 시작하는 폴더, .github 제외)는 이 저장소의 코드가 아니다.
+const HINT_SKIP_RE = /(?:^|\/)(?:skills\/work-learnings|node_modules)\/|(?:^|\/)\.(?!github\/)[^/]+\//;
+const COMMENTS_PER_FILE = 3;
 const BODYLESS_DEFAULT = 10;
+// 바뀐 파일이 전부 코드 아닌 파일이면 종류를 표시한다 — 프로젝트 설정 변경일 때가 많지만, CI·빌드 함정은 배울 거리일 수 있어 빼지 않는다.
+const FILE_KINDS = [
+  ['CI·빌드', /(?:^|\/)(?:\.github\/|\.gitlab-ci|\.circleci\/|Jenkinsfile|azure-pipelines|bitbucket-pipelines|Dockerfile|docker-compose|Makefile$|turbo\.json$|nx\.json$|tsconfig[^/]*\.json$|[^/]+\.config\.\w+$)/i],
+  ['문서', /(?:^|\/)(?:docs\/|[^/]+\.(?:md|mdx|txt|rst)$)/i],
+  ['설정', /(?:^|\/)(?:package(?:-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|\.env[^/]*|\.gitignore|\.\w+rc(?:\.\w+)?|[^/]+\.(?:toml|ya?ml|ini|cfg|conf|jsonc))$/i],
+];
 // 주의 문서: 파일 이름이나 md 제목으로 찾는다.
 const CAVEAT_FILE_RE = /(?:^|\/)(?:caveats?|gotchas?|pitfalls?|troubleshooting|known[-_ ]issues|lessons?[-_ ]learned)[^/]*\.md$/i;
 const CAVEAT_HEADING_RE = /^#{1,6}\s+.*(?:주의|함정|트러블슈팅|알려진 문제|caveats?|gotchas?|pitfalls?|known issues|troubleshooting)/i;
-const MD_COMMENT_RE = /<!--\s*(?:@?(?:HACK|WORKAROUND|XXX|GOTCHA|CAVEAT)\b|주의|우회|함정)|<!--.*(?:함정|조용히|깨진다|깨짐)/i;
+const HEADINGS_PER_DOC = 5;
 // repo-tickets 의 완료 일감 (`<YYYYMMDD>_<우선순위>_<이름>.md` 또는 에픽 디렉터리)
 const DONE_DIR = 'docs/tickets/done';
 const DONE_ENTRY_RE = /^\d{8}_\d{3}_[a-z]+-[a-z0-9-]+(\.md)?$/;
+const DONE_SECTION_RE = /^#{2,6}\s+(.*(?:원인|재현|배운|교훈|함정|경위|root cause|lessons?).*)$/i;
 
 // ---------- 공통 ----------
 
@@ -89,7 +109,6 @@ function rel(ctx, p) {
 
 function oneLine(opt, key) {
   const v = opt[key];
-  if (typeof v === 'number') return String(v);
   if (typeof v !== 'string' || !v.trim()) fail(`--${key} 가 필요하다`);
   if (/\n/.test(v)) fail(`--${key} 는 한 줄로`);
   return v.trim();
@@ -240,47 +259,72 @@ function cmdInit(ctx) {
   console.log(`${text === null ? '색인 생성' : '색인 갱신'}: ${rel(ctx, readme)}`);
 }
 
-// --stdin: 필드를 JSON 으로 받는다 — 백틱·`${…}` 를 셸 이스케이프 없이 넣을 수 있게.
-function readStdinFields(opt) {
+// --stdin: 필드를 JSON 으로 받는다 — 백틱·`${…}` 를 셸 이스케이프 없이. 배열이면 여러 항목을 한 번에 ("전부" 승인).
+function readStdinItems(opt) {
   let data;
-  try { data = JSON.parse(fs.readFileSync(0, 'utf8')); } catch { fail('--stdin 은 JSON 객체 {"category","title","why","when","source","date"?}'); }
-  if (!data || typeof data !== 'object' || Array.isArray(data)) fail('--stdin 은 JSON 객체');
-  return { ...data, ...Object.fromEntries(Object.entries(opt).filter(([k]) => k !== 'stdin')) };
+  try { data = JSON.parse(fs.readFileSync(0, 'utf8')); } catch { fail('--stdin 은 JSON 객체 {"category","title","why","when","source","date"?} 또는 그 배열'); }
+  const list = Array.isArray(data) ? data : [data];
+  if (!list.length || list.some((x) => !x || typeof x !== 'object' || Array.isArray(x))) fail('--stdin 은 JSON 객체 또는 객체 배열');
+  return list;
 }
 
-function cmdAdd(ctx, pos, rawOpt) {
+// 한 항목의 필드를 검사해 { category, title, why, when, source, date } 로. 어긋나면 멈춘다.
+function checkItem(cats, opt, label) {
+  const at = label ? `${label}: ` : '';
+  const need = (key) => {
+    const v = typeof opt[key] === 'number' ? String(opt[key]) : opt[key];
+    if (typeof v !== 'string' || !v.trim()) fail(`${at}--${key} 가 필요하다`);
+    if (/\n/.test(v)) fail(`${at}--${key} 는 한 줄로`);
+    return v.trim();
+  };
+  const category = need('category');
+  if (!cats.some((c) => c.id === category)) fail(`${at}모르는 카테고리: ${category} — ${cats.map((c) => c.id).join(', ')}`);
+  const title = need('title');
+  if (/[?？]$/.test(title)) fail(`${at}제목은 질문형이 아니라 배운 것을 한 줄 규칙으로`);
+  if (TITLE_DASH_RE.test(title)) fail(`${at}제목에 ' — ' 가 있다 — 제안의 '제목 — 왜' 에서 뒤쪽은 --why 로 (제목은 배운 것 하나)`);
+  const source = need('source');
+  if (LEADING_DATE_RE.test(source)) fail(`${at}--source 에 날짜를 넣지 않는다 — 날짜는 --date 로 (출처 줄 맨 앞에 붙는다)`);
+  const date = opt.date === undefined ? today() : String(opt.date);
+  if (!DATE_RE.test(date)) fail(`${at}--date 는 YYYY-MM-DD`);
+  return { category, title, why: need('why'), when: need('when'), source, date };
+}
+
+function cmdAdd(ctx, pos, opt) {
   requireInit(ctx);
-  const opt = rawOpt.stdin ? readStdinFields(rawOpt) : rawOpt;
   const { cats, items } = load(ctx);
-  const category = oneLine(opt, 'category');
-  if (!cats.some((c) => c.id === category)) fail(`모르는 카테고리: ${category} — ${cats.map((c) => c.id).join(', ')}`);
-  const title = oneLine(opt, 'title');
-  if (/[?？]$/.test(title)) fail('제목은 질문형이 아니라 배운 것을 한 줄 규칙으로');
-  if (TITLE_DASH_RE.test(title)) fail("제목에 ' — ' 가 있다 — 제안의 '제목 — 왜' 에서 뒤쪽은 --why 로 (제목은 배운 것 하나)");
-  const why = oneLine(opt, 'why');
-  const when = oneLine(opt, 'when');
-  const source = oneLine(opt, 'source');
-  const date = typeof opt.date === 'string' ? opt.date : today();
-  if (!DATE_RE.test(date)) fail('--date 는 YYYY-MM-DD');
+  const flags = Object.fromEntries(Object.entries(opt).filter(([k]) => k !== 'stdin' && k !== 'force'));
+  const raw = opt.stdin ? readStdinItems(opt).map((x) => ({ ...x, ...flags })) : [opt];
+  const batch = raw.map((x, i) => checkItem(cats, x, raw.length > 1 ? `${i + 1}번` : ''));
 
-  const same = items.find((it) => normalize(it.title) === normalize(title));
-  if (same) fail(`같은 제목이 이미 있다: ${rel(ctx, same.file)}:${same.line} — 새로 쓰지 말고 그 항목을 갱신하라`);
-  const near = items.filter((it) => isSimilar(it.title, title));
-  if (near.length && !opt.force) {
-    console.error('비슷한 항목이 있다 — 같은 교훈이면 새로 쓰지 말고 그 항목을 갱신하라 (다른 교훈이면 --force):');
-    for (const it of near) console.error(`  ${rel(ctx, it.file)}:${it.line}  ${it.title}`);
-    process.exit(1);
+  // 기존 항목·같은 묶음 안의 앞 항목과 비교한다. 하나라도 걸리면 아무것도 쓰지 않는다.
+  const seen = [...items];
+  let blocked = false;
+  batch.forEach((it, i) => {
+    const label = batch.length > 1 ? `${i + 1}번 ` : '';
+    const where = (x) => (x.file ? `${rel(ctx, x.file)}:${x.line}` : `이번 묶음 ${batch.indexOf(x) + 1}번`);
+    const same = seen.find((x) => normalize(x.title) === normalize(it.title));
+    if (same) fail(`${label}같은 제목이 이미 있다: ${where(same)} — 새로 쓰지 말고 그 항목을 갱신하라`);
+    const near = seen.filter((x) => isSimilar(x.title, it.title));
+    if (near.length && !opt.force) {
+      console.error(`${label}'${it.title}' — 비슷한 항목이 있다. 같은 교훈이면 새로 쓰지 말고 그 항목을 갱신하라 (다른 교훈이면 --force):`);
+      for (const x of near) console.error(`  ${where(x)}  ${x.title}`);
+      blocked = true;
+    }
+    seen.push(it);
+  });
+  if (blocked) process.exit(1);
+
+  for (const it of batch) {
+    const file = path.join(ctx.dir, `${it.category}.md`);
+    const scope = cats.find((c) => c.id === it.category).scope;
+    let text = readText(file) ?? `# ${it.category}\n\n> ${scope}\n`;
+    if (!text.endsWith('\n')) text += '\n';
+    const line = text.split('\n').length + 1;
+    text += `\n## ${it.title}\n\n- 왜: ${it.why}\n- 언제: ${it.when}\n- 출처: ${it.date}, ${it.source}\n`;
+    fs.writeFileSync(file, text);
+    console.log(`기록: ${rel(ctx, file)}:${line}  ${it.title}`);
   }
-
-  const file = path.join(ctx.dir, `${category}.md`);
-  const scope = cats.find((c) => c.id === category).scope;
-  let text = readText(file) ?? `# ${category}\n\n> ${scope}\n`;
-  if (!text.endsWith('\n')) text += '\n';
-  const line = text.split('\n').length + 1;
-  text += `\n## ${title}\n\n- 왜: ${why}\n- 언제: ${when}\n- 출처: ${date}, ${source}\n`;
-  fs.writeFileSync(file, text);
   writeIndex(ctx, cats, load(ctx).items);
-  console.log(`기록: ${rel(ctx, file)}:${line}  ${title}`);
 }
 
 function cmdCategory(ctx, pos, opt) {
@@ -330,6 +374,7 @@ function cmdLint(ctx, pos, opt) {
     for (const f of FIELDS) if (!it.fields[f].some(Boolean)) add('error', at(it), `'${f}' 없음`);
     for (const s of it.fields.출처) {
       if (s && !DATE_RE.test(s.split(',')[0].trim())) add('error', at(it), `출처는 날짜로 시작한다 — '- 출처: YYYY-MM-DD, …' ('${s}')`);
+      else if (DOUBLE_DATE_RE.test(s)) add('warn', at(it), `출처에 날짜가 둘 — 그 일이 있던 날 하나만 ('${s}', v0.2.0 이하 add 가 붙인 것일 수 있다)`);
     }
     if (/[?？]$/.test(it.title)) add('warn', at(it), '질문형 제목 — 배운 것을 한 줄 규칙으로');
     if (TITLE_DASH_RE.test(it.title)) add('warn', at(it), "제목에 ' — ' — 이유·조건은 '왜'·'언제' 로 옮기고 제목은 배운 것 하나로");
@@ -357,6 +402,18 @@ function cmdLint(ctx, pos, opt) {
 // "(보인 수)" 또는 잘렸으면 "(보인 수/전체)"
 const shown = (n, total) => (n < total ? `${n}/${total}` : `${n}`);
 
+// 코드 파일이 하나도 없으면 바뀐 파일 종류("CI·빌드"·"설정"·"문서"), 있으면 null.
+function fileKinds(files) {
+  if (!files.length) return null;
+  const kinds = new Set();
+  for (const f of files) {
+    const k = FILE_KINDS.find(([, re]) => re.test(f));
+    if (!k) return null;
+    kinds.add(k[0]);
+  }
+  return FILE_KINDS.map(([k]) => k).filter((k) => kinds.has(k)).join('·');
+}
+
 function cmdHints(ctx, pos, opt) {
   const limit = opt.limit === undefined ? 30 : Number(opt.limit);
   if (!Number.isInteger(limit) || limit < 1) fail('--limit 은 1 이상의 정수');
@@ -365,67 +422,94 @@ function cmdHints(ctx, pos, opt) {
     catch { fail('git 저장소에서만 쓸 수 있다'); }
   };
 
-  // 본문에 "왜" 가 적힌 커밋이 가장 좋은 단서다 — 본문 긴 것부터. 본문 없는 커밋은 제목만으로 판단해야 해서 따로, 적게.
+  // 본문에 "왜" 가 적힌 커밋이 가장 좋은 단서다 — 이유 표현이 많은 것, 그다음 본문 긴 것부터.
+  // 본문 없는 커밋은 제목만으로 판단해야 해서 따로, 적게.
   const since = typeof opt.since === 'string' ? [`--since=${opt.since}`] : [];
-  const commits = git('log', ...since, '--date=short', '--name-only', '--format=%x1e%h%x1f%ad%x1f%s%x1f%b%x1f').split('\x1e').slice(1)
-    .map((rec) => {
+  const commits = git('log', '--no-merges', ...since, '--date=short', '--name-only', '--format=%x1e%h%x1f%ad%x1f%s%x1f%b%x1f').split('\x1e').slice(1)
+    .map((rec, order) => {
       const [hash, date, subject, body = '', names = ''] = rec.split('\x1f');
-      const files = names.split('\n').filter(Boolean);
-      const bodyLines = body.split('\n').filter((l) => l.trim() && !/^[\w-]+: .+@/.test(l)).length; // Co-Authored-By 등 트레일러 제외
-      return { hash, date, subject, bodyLines, configOnly: files.length > 0 && files.every((f) => CONFIG_FILE_RE.test(f)) };
+      const lines = body.split('\n').filter((l) => l.trim() && !BODY_NOISE_RE.some((re) => re.test(l)));
+      return { hash, date, subject, order, bodyLines: lines.length, why: (lines.join('\n').match(WHY_RE) ?? []).length,
+        kinds: fileKinds(names.split('\n').filter(Boolean)) };
     })
     .filter((c) => HINT_COMMIT_RE.test(c.subject) && !HINT_COMMIT_SKIP_RE.test(c.subject));
-  const withBody = commits.filter((c) => c.bodyLines).sort((a, b) => b.bodyLines - a.bodyLines); // 같은 길이는 최근 순 유지
+  const withBody = commits.filter((c) => c.bodyLines).sort((a, b) => b.why - a.why || b.bodyLines - a.bodyLines || a.order - b.order);
   const bodyless = commits.filter((c) => !c.bodyLines);
-  const line = (c) => `  ${c.hash}  ${c.date}  ${c.subject}${c.bodyLines ? `  (본문 ${c.bodyLines}줄)` : ''}${c.configOnly ? `${c.bodyLines ? ' ' : '  '}(설정·문서만)` : ''}`;
+  const line = (c) => {
+    const tags = [c.bodyLines ? `본문 ${c.bodyLines}줄${c.why ? ` · 이유 ${c.why}` : ''}` : '', c.kinds ?? ''].filter(Boolean);
+    return `  ${c.hash}  ${c.date}  ${c.subject}${tags.length ? `  ${tags.map((t) => `(${t})`).join(' ')}` : ''}`;
+  };
   const a = withBody.slice(0, limit);
-  console.log(`\n본문 있는 커밋 (${shown(a.length, withBody.length)}) — 고친·되돌린·다시 짠 커밋, 본문 긴 순. \`git show <해시>\` 로 "왜" 를 읽는다`);
+  console.log(`\n본문 있는 커밋 (${shown(a.length, withBody.length)}) — 이유 표현 많은 순, 그다음 본문 긴 순. \`git show <해시>\` 로 "왜" 를 읽는다`);
   for (const c of a) console.log(line(c));
   const b = bodyless.slice(0, opt.all ? limit : Math.min(limit, BODYLESS_DEFAULT));
   console.log(`\n본문 없는 커밋 (${shown(b.length, bodyless.length)}) — 최근 순, 제목만으로 판단하기 어렵다${b.length < bodyless.length && !opt.all ? ' (더 보려면 --all)' : ''}`);
   for (const c of b) console.log(line(c));
+  console.log('  (CI·빌드)·(설정)·(문서) = 바뀐 파일이 그것뿐인 커밋. 설정 변경이면 프로젝트 사정일 때가 많지만 CI·빌드 함정은 배울 거리일 수 있다');
 
+  // 주석: 같은 문장을 복사한 곳은 한 번만, 파일 하나에서 많아야 3개 (한 폴더에 쏠리지 않게).
   const learnings = rel(ctx, ctx.dir);
   const files = git('ls-files').split('\n').filter((f) => f && !HINT_SKIP_RE.test(f) && !f.startsWith(`${learnings}/`));
-  const comments = [];
+  const comments = new Map(); // 정규화한 문장 → { at, text, more }
   const docs = [];
   for (const f of files) {
-    if (comments.length >= limit && docs.length >= limit) break;
     const isMd = /\.md$/i.test(f);
-    if (isMd && CAVEAT_FILE_RE.test(f)) { if (docs.length < limit) docs.push(`${f}`); continue; }
     const abs = path.join(ctx.root, f);
     try { if (fs.statSync(abs).size > 1 << 20) continue; } catch { continue; }
     const text = readText(abs);
     if (!text || text.includes('\0')) continue;
+    const caveatFile = isMd && CAVEAT_FILE_RE.test(f);
+    const heads = [];
     let fence = false;
+    let perFile = 0;
     text.split('\n').forEach((l, i) => {
       if (isMd && /^\s*(```|~~~)/.test(l)) fence = !fence;
-      // md 의 `#` 는 제목이다 — 주석 절이 아니라 주의 문서 절에서 본다.
-      if (isMd && !fence && CAVEAT_HEADING_RE.test(l)) { if (docs.length < limit) docs.push(`${f}:${i + 1}  ${l.trim().slice(0, 160)}`); }
-      else if ((isMd ? MD_COMMENT_RE : HINT_COMMENT_RE).test(l)) { if (comments.length < limit) comments.push(`${f}:${i + 1}  ${l.trim().slice(0, 160)}`); }
+      // md 의 `#` 는 제목이다 — 주석 절이 아니라 주의 문서 절에서 본다. 주의 문서 파일은 제목 목록을 보인다.
+      if (isMd && !fence && /^#{1,6}\s/.test(l)) {
+        if (caveatFile ? !/^#\s/.test(l) : CAVEAT_HEADING_RE.test(l)) heads.push(`${f}:${i + 1}  ${l.trim().slice(0, 160)}`);
+        return;
+      }
+      if (!(isMd ? MD_COMMENT_RE : HINT_COMMENT_RE).test(l)) return;
+      const key = l.replace(/^[\s/*#<!-]+|[\s*/>-]+$/g, '').replace(/\s+/g, ' ');
+      const seen = comments.get(key);
+      if (seen) { seen.more++; return; }
+      if (perFile++ >= COMMENTS_PER_FILE) { comments.set(key, { skipped: true, more: 0 }); return; }
+      comments.set(key, { at: `${f}:${i + 1}`, text: l.trim().slice(0, 160), more: 0 });
     });
+    if (caveatFile) docs.push({ head: f, lines: heads });
+    else for (const h of heads) docs.push({ head: h, lines: [] });
   }
-  console.log(`\n주의·우회 주석 (${comments.length})`);
-  for (const c of comments) console.log(`  ${c}`);
-  console.log(`\n주의 문서 (${docs.length}) — CAVEATS 같은 파일, md 의 주의·함정 제목`);
-  for (const c of docs) console.log(`  ${c}`);
+  const allComments = [...comments.values()];
+  const listed = allComments.filter((c) => !c.skipped).slice(0, limit);
+  console.log(`\n주의·우회 주석 (${shown(listed.length, allComments.length)}) — 같은 문장은 한 번, 파일당 ${COMMENTS_PER_FILE}개까지`);
+  for (const c of listed) console.log(`  ${c.at}  ${c.text}${c.more ? `  (같은 주석 ${c.more}곳 더)` : ''}`);
+  const d = docs.slice(0, limit);
+  console.log(`\n주의 문서 (${shown(d.length, docs.length)}) — CAVEATS 같은 파일(제목 목록과 함께), md 의 주의·함정 제목`);
+  for (const x of d) {
+    console.log(`  ${x.head}`);
+    for (const h of x.lines.slice(0, HEADINGS_PER_DOC)) console.log(`      ${h}`);
+    if (x.lines.length > HEADINGS_PER_DOC) console.log(`      … 제목 ${x.lines.length - HEADINGS_PER_DOC}개 더`);
+  }
 
-  // repo-tickets 를 함께 쓰면 완료 일감의 "원인"·진행 로그가 가장 진한 단서다.
+  // repo-tickets 를 함께 쓰면 완료 일감의 "원인"·진행 로그가 가장 진한 단서다 — 그런 절이 있는 일감을 먼저.
   const doneDir = path.join(ctx.root, DONE_DIR);
   if (fs.existsSync(doneDir)) {
     const all = fs.readdirSync(doneDir, { withFileTypes: true })
       .filter((e) => DONE_ENTRY_RE.test(e.name) && e.isDirectory() !== e.name.endsWith('.md'))
       .map((e) => {
         const file = path.join(doneDir, e.name, ...(e.isDirectory() ? ['README.md'] : []));
-        return { file, title: (readText(file) ?? '').match(/^# (.+)$/m)?.[1] ?? '' };
+        const text = (readText(file) ?? '').replace(/^---\n[\s\S]*?\n---\n/, '');
+        const sections = text.split('\n').map((l) => l.match(DONE_SECTION_RE)?.[1].trim()).filter(Boolean);
+        return { file, name: e.name, title: text.match(/^# (.+)$/m)?.[1] ?? '', sections, lines: text.split('\n').filter((l) => l.trim()).length };
       })
-      .sort((x, y) => path.relative(doneDir, y.file).localeCompare(path.relative(doneDir, x.file)));
+      .sort((x, y) => (y.sections.length ? 1 : 0) - (x.sections.length ? 1 : 0) || y.name.localeCompare(x.name));
     const done = all.slice(0, limit);
-    console.log(`\n완료 일감 (${shown(done.length, all.length)}) — 최근 것부터, "원인"·진행 로그를 읽는다`);
-    for (const t of done) console.log(`  ${rel(ctx, t.file)}  ${t.title}`);
+    console.log(`\n완료 일감 (${shown(done.length, all.length)}) — 원인·재현·배운 것 같은 절이 있는 것 먼저, 최근 순`);
+    for (const t of done) console.log(`  ${rel(ctx, t.file)}  ${t.title}  (${[...t.sections.slice(0, 3), `${t.lines}줄`].join(' · ')})`);
   }
 
-  console.log('\n이건 단서일 뿐이다 — 읽어 보고 "다른 프로젝트에서도 통하는" 것만 배울 거리로 제안한다 (rules.md).');
+  console.log('\n이건 단서일 뿐이다 — 단서가 가리키는 커밋·코드·문서를 읽고 "다른 프로젝트에서도 통하는" 것만 제안한다.');
+  console.log('단서가 많아도 배울 거리는 0개일 수 있다 — 개수를 채우지 않는다 (rules.md).');
 }
 
 // ---------- 진입 ----------
@@ -434,7 +518,7 @@ const USAGE = `work-learnings v${VERSION} — docs/learnings/ 배움 기록 (규
 
   init
   add --category <id> --title "<배운 것 한 줄>" --why "<왜>" --when "<언제>" --source "<일감·커밋·작업>" [--date YYYY-MM-DD] [--force]
-  add --stdin [--force]    (필드를 JSON 으로: {"category","title","why","when","source","date"?})
+  add --stdin [--force]    (필드를 JSON 으로: {"category","title","why","when","source","date"?} 또는 그 배열)
   list [<카테고리>]
   lint [--fix]
   category <id> --scope "<범위>" --reason "<근거>"

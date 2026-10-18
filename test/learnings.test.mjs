@@ -139,6 +139,28 @@ test('add --stdin: 백틱·${…} 를 셸 이스케이프 없이 넣는다', () 
   assert.match(bad.stderr, /JSON/);
 });
 
+test('add --stdin: 배열이면 여러 항목을 한 번에, 하나라도 걸리면 아무것도 안 쓴다', () => {
+  const d = repo();
+  ok(d, 'init');
+  const send = (items, ...args) => spawnSync('node', [SCRIPT, 'add', '--stdin', ...args], { cwd: d, encoding: 'utf8', input: JSON.stringify(items) });
+  const base = { why: 'w', when: 'n', source: 's', date: '2026-09-26' };
+  let r = send([{ ...base, category: 'git', title: 'ignore 패턴은 슬래시로 시작해야 루트에만 걸린다' },
+    { ...base, category: 'testing', title: '비움을 단언하기 전에 채움을 단언한다' }]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(read(d, `${L}/git.md`), /ignore 패턴/);
+  assert.match(read(d, `${L}/testing.md`), /비움을 단언/);
+
+  // 묶음 안끼리 비슷하면 멈춘다 — 앞 항목도 쓰지 않는다
+  r = send([{ ...base, category: 'ui-ux', title: CHIPS }, { ...base, category: 'ui-ux', title: '모바일 칩 가로 스크롤은 화면 끝까지 넘긴다' }]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /2번 .*비슷한 항목[\s\S]*이번 묶음 1번/);
+  assert.ok(!fs.existsSync(path.join(d, L, 'ui-ux.md')));
+  // 필드 오류는 몇 번째인지 알려 준다
+  r = send([{ ...base, category: 'ui-ux', title: 't1' }, { ...base, category: 'nope', title: 't2' }]);
+  assert.match(r.stderr, /2번: 모르는 카테고리/);
+  assert.ok(!fs.existsSync(path.join(d, L, 'ui-ux.md')));
+});
+
 test('add: 입력 검사', () => {
   const d = repo();
   ok(d, 'init');
@@ -146,6 +168,8 @@ test('add: 입력 검사', () => {
   assert.match(run(d, 'add', '--category', 'ui-ux', '--title', 't', '--when', 'n', '--source', 's').out, /--why/);
   assert.match(add(d, '칩은 끝까지 넘겨야 할까?').out, /질문형/);
   assert.match(add(d, 't', '--date', '2026/10/18').out, /YYYY-MM-DD/);
+  // 출처에 날짜를 넣으면 앞에 붙는 날짜와 둘이 된다 (v0.2.0 이하의 버그)
+  assert.match(run(d, 'add', '--category', 'ui-ux', '--title', 't', '--why', 'w', '--when', 'n', '--source', '2026-09-30, 8bc3c37').out, /--date 로/);
   // 제안 형식 "제목 — 왜" 를 통째로 제목에 넣은 실수
   assert.match(add(d, '자동 포커스는 마우스 기기에서만 — 안드로이드는 코드 focus() 에도 키보드를 올린다').out, /' — '/);
 });
@@ -161,6 +185,7 @@ test('lint: 오류와 경고', () => {
     '## 모바일 칩 가로 스크롤은 화면 끝까지 넘긴다', '', '- 왜: a', '- 언제: b', '- 출처: 2026-10-18, x', '',
     '## 정말 그럴까?', '', '- 왜: a', '- 언제: b', '- 출처: 2026-10-18, x', '',
     '## 제목에 이유를 붙였다 — 이건 왜 필드로', '', '- 왜: a', '- 언제: b', '- 출처: 2026-10-18, x', '',
+    '## 출처에 날짜가 두 번 붙은 항목', '', '- 왜: a', '- 언제: b', '- 출처: 2026-10-18, 2026-09-30, 8bc3c37', '',
     '```md', '## 코드 블록 안의 제목은 항목이 아니다', '```', '',
   ].join('\n'));
   write(d, `${L}/frontend.md`, `# frontend\n\n## ${CHIPS}.\n\n- 왜: a\n- 언제: b\n- 출처: 2026-10-18, x\n`);
@@ -175,6 +200,7 @@ test('lint: 오류와 경고', () => {
   assert.match(r.out, /! docs\/learnings\/ui-ux\.md:19 .*비슷한 제목.*ui-ux\.md:13/);
   assert.match(r.out, /! docs\/learnings\/ui-ux\.md:25 .*질문형/);
   assert.match(r.out, /! docs\/learnings\/ui-ux\.md:31 .*' — '/);
+  assert.match(r.out, /! docs\/learnings\/ui-ux\.md:37 .*날짜가 둘/);
   assert.match(r.out, /✗ docs\/learnings\/random\.md .*모르는 카테고리/);
   assert.match(r.out, /✗ docs\/learnings\/README\.md .*색인/);
   assert.doesNotMatch(r.out, /코드 블록 안의/);
@@ -215,6 +241,8 @@ test('hints: 배움이 숨어 있기 쉬운 커밋·주석·완료 일감을 나
     '// 주의: 이 순서를 바꾸면 IME 입력이 끊긴다',
     'const todo = "WORKAROUND 라는 단어가 든 문자열이 아니라 주석만 본다";',
     '/* workaround: iOS 에서 click 이 두 번 온다 */',
+  ].join('\n'));
+  write(d, 'src/c.ts', [
     '// 캐시 키에 locale 을 안 넣으면 **조용히** 다른 언어가 나간다',
     '// 이 값을 바꾸면 마이그레이션이 깨진다',
     '// 함정 이라는 낱말이 주석 중간에 있어도 잡는다',
@@ -256,18 +284,18 @@ test('hints: 배움이 숨어 있기 쉬운 커밋·주석·완료 일감을 나
   assert.ok(at('fix: 모바일에서 칩 끝이') < at('refactor: 목록 상태 공유'), out);
   assert.ok(at('refactor: 목록 상태 공유') < at('본문 없는 커밋'), out);
   assert.ok(at('본문 없는 커밋') < at('Revert "feat: 무한 스크롤"') && at('본문 없는 커밋') < at('fix: 오타'), out);
-  assert.match(out, /fix: 모바일에서 칩 끝이.*\(본문 2줄\)/);
   assert.doesNotMatch(out, /feat: 화면 추가|docs: 원인 분석|chore\(deps\)/);
-  assert.match(out, /fix: 로컬 API 포트를 8787 로 통일 {2}\(본문 1줄\) \(설정·문서만\)/);
+  assert.match(out, /fix: 로컬 API 포트를 8787 로 통일 {2}\(본문 1줄\) \(설정\)/);
+  assert.match(out, /fix: 모바일에서 칩 끝이.*\(본문 2줄 · 이유 1\)/);
   assert.match(out, /fix: 코드가 섞인 수정 {2}\(본문 1줄\)\n/);
 
   assert.match(out, /src\/a\.ts:2 .*HACK: Safari/);
   assert.match(out, /src\/a\.ts:3 .*주의: 이 순서/);
   assert.match(out, /src\/a\.ts:5 .*workaround: iOS/);
-  assert.match(out, /src\/a\.ts:6 .*조용히/);
-  assert.match(out, /src\/a\.ts:7 .*깨진다/);
-  assert.match(out, /src\/a\.ts:8 .*함정/);
-  assert.doesNotMatch(out, /src\/a\.ts:(4|9) /);
+  assert.match(out, /src\/c\.ts:1 .*조용히/);
+  assert.match(out, /src\/c\.ts:2 .*깨진다/);
+  assert.match(out, /src\/c\.ts:3 .*함정/);
+  assert.doesNotMatch(out, /src\/a\.ts:4 |src\/c\.ts:4 /);
   assert.doesNotMatch(out, /설치본은|이미 기록한|learnings 색인/);
   assert.match(out, /docs\/guide\.md:5 .*<!-- 주의: md 주석/);
 
@@ -292,6 +320,83 @@ test('hints: 배움이 숨어 있기 쉬운 커밋·주석·완료 일감을 나
   assert.match(ok(d, 'hints', '--since', '2000-01-01'), /fix: 모바일/);
   const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
   assert.match(ok(d, 'hints', '--since', tomorrow), /본문 있는 커밋 \(0\)/);
+});
+
+test('hints: 커밋 본문의 잡음은 본문으로 치지 않고, 이유 표현이 많은 본문을 먼저', () => {
+  const d = repo();
+  const c = (...msgs) => git(d, 'commit', '-q', '--allow-empty', ...msgs.flatMap((m) => ['-m', m]));
+  c('Revert "feat: 무한 스크롤"', 'This reverts commit 0123456789abcdef0123456789abcdef01234567.');
+  c('hotfix: 설정 변경 (#336)', '* fix: a\n* chore: b\n* feat(ui): c\n- Revert "x"');
+  c('fix: 트레일러만 있는 커밋', 'Co-Authored-By: Someone <a@b.c>\nSigned-off-by: X <x@y.z>\n(cherry picked from commit abcdef1)');
+  c('refactor: 큰 변경', '한 줄\n두 줄\n세 줄\n네 줄\n다섯 줄');
+  c('fix: 짧지만 이유가 있다', '키가 바뀌어서 읽기가 조용히 비었다 — 그래서 테스트가 아무것도 안 해도 통과했다.');
+  git(d, 'checkout', '-q', '-b', 'side');
+  c('fix: 브랜치 쪽 수정', '본문');
+  git(d, 'checkout', '-q', '-');
+  git(d, 'merge', '-q', '--no-ff', 'side', '-m', 'fix: 머지 커밋은 보지 않는다', '-m', '머지 본문');
+
+  const out = ok(d, 'hints');
+  const body = out.slice(out.indexOf('본문 있는 커밋'), out.indexOf('본문 없는 커밋'));
+  const none = out.slice(out.indexOf('본문 없는 커밋'));
+  for (const t of ['Revert "feat: 무한 스크롤"', 'hotfix: 설정 변경', 'fix: 트레일러만']) {
+    assert.doesNotMatch(body, new RegExp(t.replace(/[()"]/g, '.')), out);
+    assert.match(none, new RegExp(t.replace(/[()"]/g, '.')), out);
+  }
+  assert.ok(body.indexOf('fix: 짧지만 이유가 있다') < body.indexOf('refactor: 큰 변경'), out);
+  assert.match(body, /fix: 짧지만 이유가 있다 {2}\(본문 1줄 · 이유 2\)/);
+  assert.doesNotMatch(out, /머지 커밋은/);
+  assert.match(out, /fix: 브랜치 쪽 수정/);
+});
+
+test('hints: 바뀐 파일 종류 표시 — CI·빌드 / 설정 / 문서', () => {
+  const d = repo();
+  const fix = (files, msg) => {
+    for (const f of files) write(d, f, `${msg}\n`);
+    git(d, 'add', '-A');
+    git(d, 'commit', '-q', '-m', msg, '-m', '본문');
+  };
+  fix(['.github/workflows/ci.yml'], 'fix: CI 만');
+  fix(['vite.config.ts', 'package.json'], 'fix: 빌드와 설정');
+  fix(['README.md', 'docs/a.txt'], 'fix: 문서 만');
+  fix(['src/a.ts', 'README.md'], 'fix: 코드 섞임');
+  const out = ok(d, 'hints');
+  assert.match(out, /fix: CI 만 {2}\(본문 1줄\) \(CI·빌드\)/);
+  assert.match(out, /fix: 빌드와 설정 {2}\(본문 1줄\) \(CI·빌드·설정\)/);
+  assert.match(out, /fix: 문서 만 {2}\(본문 1줄\) \(문서\)/);
+  assert.match(out, /fix: 코드 섞임 {2}\(본문 1줄\)\n/);
+});
+
+test('hints: 주석은 같은 문장 한 번, 파일당 3개, 다른 도구 폴더 제외, 잘리면 전체 수', () => {
+  const d = repo();
+  write(d, 'a.yml', '# 주의: 같은 문장을 복사한 워크플로\n');
+  write(d, 'b.yml', '# 주의: 같은 문장을 복사한 워크플로\n');
+  write(d, 'many.ts', ['// 주의: 하나', '// 주의: 둘', '// 주의: 셋', '// 주의: 넷'].join('\n'));
+  write(d, '.other-tool/scan.mjs', '// 주의: 다른 도구 설치 폴더');
+  write(d, '.github/workflows/x.yml', '# 함정: .github 는 본다\n');
+  commit(d, 'add');
+  const out = ok(d, 'hints');
+  assert.match(out, /a\.yml:1 .*같은 문장을 복사한 워크플로 {2}\(같은 주석 1곳 더\)/);
+  assert.doesNotMatch(out, /b\.yml:1/);
+  assert.match(out, /many\.ts:3 .*셋/);
+  assert.doesNotMatch(out, /many\.ts:4/);
+  assert.doesNotMatch(out, /다른 도구 설치 폴더/);
+  assert.match(out, /\.github\/workflows\/x\.yml:1/);
+  assert.match(out, /주의·우회 주석 \(5\/6\)/);
+});
+
+test('hints: 주의 문서 파일은 제목 목록과 함께, 완료 일감은 원인 절이 있는 것 먼저', () => {
+  const d = repo();
+  write(d, 'docs/TROUBLESHOOTING.md', ['# Troubleshooting', '', '## 빌드가 멈춘다', '', '```md', '## 코드 안 제목', '```', '### 캐시', ''].join('\n'));
+  write(d, 'docs/tickets/done/20261001_100_task-new.md', '---\ntype: task\n---\n\n# 최근 일감\n\n본문\n');
+  write(d, 'docs/tickets/done/20260901_100_bug-old.md', '---\ntype: bug\n---\n\n# 옛 버그\n\n## 원인\n\n여백\n\n## 재현\n\n1\n');
+  commit(d, 'add');
+  const out = ok(d, 'hints');
+  assert.match(out, /\n {2}docs\/TROUBLESHOOTING\.md\n {6}docs\/TROUBLESHOOTING\.md:3 {2}## 빌드가 멈춘다\n {6}docs\/TROUBLESHOOTING\.md:8 {2}### 캐시\n/);
+  assert.doesNotMatch(out, /코드 안 제목/);
+  assert.ok(out.indexOf('옛 버그') < out.indexOf('최근 일감'), out);
+  assert.match(out, /옛 버그 {2}\(원인 · 재현 · \d+줄\)/);
+  assert.match(out, /최근 일감 {2}\(\d+줄\)/);
+  assert.match(out, /배울 거리는 0개일 수 있다/);
 });
 
 test('hints: 본문 없는 커밋은 기본 10개까지', () => {
