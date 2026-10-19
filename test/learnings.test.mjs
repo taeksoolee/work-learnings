@@ -47,8 +47,19 @@ function write(dir, file, text) {
 const read = (dir, file) => fs.readFileSync(path.join(dir, file), 'utf8');
 
 const CHIPS = '모바일 칩 가로 스크롤은 오른쪽 여백 없이 화면 끝까지 넘긴다';
-const add = (dir, title, ...extra) =>
-  run(dir, 'add', '--category', 'ui-ux', '--title', title, '--why', '왜', '--when', '언제', '--source', '작업', ...extra);
+let seq = 0;
+// 필수 필드를 다 채운 add (제목·추가 인자만 바꿔 쓴다)
+const add = (dir, title, ...extra) => run(dir, 'add', '--category', 'ui-ux', '--slug', `item-${++seq}`, '--title', title,
+  '--why', '왜', '--when', '언제', '--case', '사례', '--apply', '적용', '--source', '작업', ...extra);
+const item = (over = {}) => ({ category: 'ui-ux', slug: `item-${++seq}`, title: `제목 ${seq}`, why: 'w', when: 'n', case: '사례', apply: '적용', source: 's', date: '2026-09-26', ...over });
+function addStdin(dir, items, ...args) {
+  const r = spawnSync('node', [SCRIPT, 'add', '--stdin', ...args], { cwd: dir, encoding: 'utf8', input: JSON.stringify(items) });
+  return { code: r.status, out: r.stdout + r.stderr };
+}
+// 항목 파일 본문 (lint 시험용으로 손으로 쓴 것)
+const itemText = ({ title, sources = ['2026-10-18, x'], why = 'a', when = 'b', cases = '사례', apply = '적용' }) =>
+  [`# ${title}`, '', ...sources.map((x) => `- 출처: ${x}`), '', '## 요약', '', `- 왜: ${why}`, `- 언제: ${when}`, '',
+    '## 사례', '', cases, '', '## 적용', '', apply, ''].join('\n');
 
 // ---------- 유사 제목 판정 ----------
 
@@ -84,135 +95,155 @@ test('유사 제목: 잡으면 안 되는 쌍', () => {
 
 // ---------- 명령 ----------
 
-test('init → add → list, 색인 갱신', () => {
+test('init → add → list: 카테고리는 폴더, 항목 하나는 파일 하나', () => {
   const d = repo();
   assert.match(ok(d, 'init'), /색인 생성/);
-  // 항목이 없는 카테고리는 표에 넣지 않고 한 줄로만 (빈 행 11개는 시끄럽다)
+  // 항목이 없는 카테고리는 절을 만들지 않고 한 줄로만
   assert.match(read(d, `${L}/README.md`), /아직 항목이 없는 카테고리: `ui-ux` · `frontend` · /);
-  assert.doesNotMatch(read(d, `${L}/README.md`), /\| 0 \|/);
+  assert.doesNotMatch(read(d, `${L}/README.md`), /^## \[/m);
 
-  ok(d, 'add', '--category', 'ui-ux', '--title', CHIPS, '--why', '끝이 잘려 보여야 더 있다는 신호가 된다.',
-    '--when', '모바일 가로 스크롤 목록', '--source', '[[task-mobile-filter-chips]]', '--date', '2026-10-18');
-  const body = read(d, `${L}/ui-ux.md`);
-  assert.match(body, /^# ui-ux\n/);
-  assert.ok(body.includes(`## ${CHIPS}\n\n- 왜: 끝이 잘려 보여야 더 있다는 신호가 된다.\n- 언제: 모바일 가로 스크롤 목록\n- 출처: 2026-10-18, [[task-mobile-filter-chips]]\n`));
-  assert.match(read(d, `${L}/README.md`), /\| \[`ui-ux`\]\(ui-ux\.md\) \|.*\| 1 \|/);
-  assert.match(read(d, `${L}/README.md`), /아직 항목이 없는 카테고리: `frontend` · /);
+  ok(d, 'add', '--category', 'ui-ux', '--slug', 'mobile-chip-scroll-edge', '--title', CHIPS,
+    '--why', '끝이 잘려 보여야 더 있다는 신호가 된다.', '--when', '모바일 가로 스크롤 목록',
+    '--case', '필터 칩 목록에 오른쪽 패딩 16px 을 줬다.\n사용자 테스트에서 칩이 더 있는 줄 몰랐다.',
+    '--apply', '가로 스크롤 목록을 디자인 리뷰할 때', '--source', '[[task-mobile-filter-chips]]', '--date', '2026-10-18');
+  assert.equal(read(d, `${L}/ui-ux/mobile-chip-scroll-edge.md`), [
+    `# ${CHIPS}`, '', '- 출처: 2026-10-18, [[task-mobile-filter-chips]]', '',
+    '## 요약', '', '- 왜: 끝이 잘려 보여야 더 있다는 신호가 된다.', '- 언제: 모바일 가로 스크롤 목록', '',
+    '## 사례', '', '필터 칩 목록에 오른쪽 패딩 16px 을 줬다.', '사용자 테스트에서 칩이 더 있는 줄 몰랐다.', '',
+    '## 적용', '', '가로 스크롤 목록을 디자인 리뷰할 때', ''].join('\n'));
+  const index = read(d, `${L}/README.md`);
+  assert.match(index, /^## \[`ui-ux`\]\(ui-ux\/\) — 화면 배치.* \(1\)$/m);
+  assert.ok(index.includes(`- [${CHIPS}](ui-ux/mobile-chip-scroll-edge.md)`));
+  assert.match(index, /아직 항목이 없는 카테고리: `frontend` · /);
 
-  assert.ok(add(d, '터치 영역은 44px 이상으로 잡는다').code === 0);
-  const list = ok(d, 'list');
-  assert.match(list, /ui-ux \(2\)\n {2}- 모바일 칩/);
+  assert.equal(add(d, '터치 영역은 44px 이상으로 잡는다').code, 0);
+  assert.match(ok(d, 'list'), /ui-ux \(2\)\n {2}- 모바일 칩.* {2}ui-ux\/mobile-chip-scroll-edge\.md/);
   assert.match(ok(d, 'list', 'ui-ux'), /터치 영역/);
   assert.equal(run(d, 'list', 'nope').code, 1);
-
   assert.match(ok(d, 'lint'), /work-learnings v[\d.]+ lint .*: 오류 0, 경고 0/);
 });
 
-test('add: 비슷한 제목이면 멈추고 --force 로 강행', () => {
+test('add: 비슷한 제목이면 멈추고 --force 로 강행, 같은 제목·슬러그는 거부', () => {
   const d = repo();
   ok(d, 'init');
-  assert.equal(add(d, CHIPS).code, 0);
+  assert.equal(add(d, CHIPS, '--slug', 'chips').code, 0); // 뒤의 --slug 가 앞의 자동 슬러그를 덮는다
   const r = add(d, '모바일 칩 가로 스크롤은 화면 끝까지 넘긴다');
   assert.equal(r.code, 1);
   assert.match(r.out, /비슷한 항목/);
-  assert.match(r.out, /ui-ux\.md:\d+/);
+  assert.match(r.out, /ui-ux\/chips\.md/);
   assert.equal(add(d, '모바일 칩 가로 스크롤은 화면 끝까지 넘긴다', '--force').code, 0);
-  // 정규화 후 같은 제목은 --force 로도 안 된다
   const dup = add(d, `${CHIPS}.`, '--force');
   assert.equal(dup.code, 1);
   assert.match(dup.out, /같은 제목/);
+  // 슬러그는 카테고리를 통틀어 하나
+  const taken = run(d, 'add', '--category', 'frontend', '--slug', 'chips', '--title', '전혀 다른 교훈', '--why', 'w', '--when', 'n',
+    '--case', 'c', '--apply', 'a', '--source', 's');
+  assert.equal(taken.code, 1);
+  assert.match(taken.out, /슬러그가 이미 있다/);
 });
 
-test('add --stdin: 백틱·${…} 를 셸 이스케이프 없이 넣는다', () => {
+test('add --stdin: 여러 줄 사례·백틱·${…} 를 셸 이스케이프 없이', () => {
   const d = repo();
   ok(d, 'init');
-  const item = {
-    category: 'data', title: '상관 서브쿼리의 외부 컬럼은 `테이블.컬럼` 으로 완전 수식한다',
+  const it = item({ category: 'data', slug: 'correlated-subquery-qualify', title: '상관 서브쿼리의 외부 컬럼은 `테이블.컬럼` 으로 완전 수식한다',
     why: '`${table.col}` 은 수식 없이 렌더링돼 안쪽 테이블에 조용히 묶인다.', when: 'sql 템플릿 상관 서브쿼리',
-    source: 'abc1234', date: '2026-09-26',
-  };
-  const r = spawnSync('node', [SCRIPT, 'add', '--stdin'], { cwd: d, encoding: 'utf8', input: JSON.stringify(item) });
-  assert.equal(r.status, 0, r.stdout + r.stderr);
-  const body = read(d, `${L}/data.md`);
-  assert.ok(body.includes(`## ${item.title}\n\n- 왜: ${item.why}\n- 언제: ${item.when}\n- 출처: 2026-09-26, abc1234\n`));
-  const bad = spawnSync('node', [SCRIPT, 'add', '--stdin'], { cwd: d, encoding: 'utf8', input: '{"category":' });
-  assert.match(bad.stderr, /JSON/);
+    case: '집계가 늘 0 이었다.\n\n```ts\nsql`select count(*) from b where b.a_id = ${a.id}`\n```\n\n`a.id` 가 `id` 로 렌더링됐다.', source: 'abc1234' });
+  const r = addStdin(d, it);
+  assert.equal(r.code, 0, r.out);
+  const body = read(d, `${L}/data/correlated-subquery-qualify.md`);
+  assert.ok(body.includes(`## 사례\n\n${it.case}\n\n## 적용`), body);
+  assert.ok(body.includes(`- 왜: ${it.why}\n`));
+  assert.match(ok(d, 'lint'), /오류 0, 경고 0/); // 사례 안 코드 블록의 `#` 는 절이 아니다
+  const r2 = spawnSync('node', [SCRIPT, 'add', '--stdin'], { cwd: d, encoding: 'utf8', input: '{"category":' });
+  assert.match(r2.stderr, /JSON/);
 });
 
 test('add --stdin: 배열이면 여러 항목을 한 번에, 하나라도 걸리면 아무것도 안 쓴다', () => {
   const d = repo();
   ok(d, 'init');
-  const send = (items, ...args) => spawnSync('node', [SCRIPT, 'add', '--stdin', ...args], { cwd: d, encoding: 'utf8', input: JSON.stringify(items) });
-  const base = { why: 'w', when: 'n', source: 's', date: '2026-09-26' };
-  let r = send([{ ...base, category: 'git', title: 'ignore 패턴은 슬래시로 시작해야 루트에만 걸린다' },
-    { ...base, category: 'testing', title: '비움을 단언하기 전에 채움을 단언한다' }]);
-  assert.equal(r.status, 0, r.stdout + r.stderr);
-  assert.match(read(d, `${L}/git.md`), /ignore 패턴/);
-  assert.match(read(d, `${L}/testing.md`), /비움을 단언/);
+  let r = addStdin(d, [item({ category: 'git', slug: 'ignore-leading-slash', title: 'ignore 패턴은 슬래시로 시작해야 루트에만 걸린다' }),
+    item({ category: 'testing', slug: 'assert-filled-first', title: '비움을 단언하기 전에 채움을 단언한다' })]);
+  assert.equal(r.code, 0, r.out);
+  assert.ok(fs.existsSync(path.join(d, L, 'git/ignore-leading-slash.md')));
+  assert.ok(fs.existsSync(path.join(d, L, 'testing/assert-filled-first.md')));
 
-  // 묶음 안끼리 비슷하면 멈춘다 — 앞 항목도 쓰지 않는다
-  r = send([{ ...base, category: 'ui-ux', title: CHIPS }, { ...base, category: 'ui-ux', title: '모바일 칩 가로 스크롤은 화면 끝까지 넘긴다' }]);
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /2번 .*비슷한 항목[\s\S]*이번 묶음 1번/);
-  assert.ok(!fs.existsSync(path.join(d, L, 'ui-ux.md')));
-  // 필드 오류는 몇 번째인지 알려 준다
-  r = send([{ ...base, category: 'ui-ux', title: 't1' }, { ...base, category: 'nope', title: 't2' }]);
-  assert.match(r.stderr, /2번: 모르는 카테고리/);
-  assert.ok(!fs.existsSync(path.join(d, L, 'ui-ux.md')));
+  r = addStdin(d, [item({ title: CHIPS }), item({ title: '모바일 칩 가로 스크롤은 화면 끝까지 넘긴다' })]);
+  assert.equal(r.code, 1);
+  assert.match(r.out, /2번 .*비슷한 항목[\s\S]*이번 묶음 1번/);
+  assert.ok(!fs.existsSync(path.join(d, L, 'ui-ux')));
+  r = addStdin(d, [item(), item({ category: 'nope' })]);
+  assert.match(r.out, /2번: 모르는 카테고리/);
+  r = addStdin(d, [item({ slug: 'same' }), item({ slug: 'same' })]);
+  assert.match(r.out, /2번 슬러그가 이미 있다: 이번 묶음 1번/);
+  assert.ok(!fs.existsSync(path.join(d, L, 'ui-ux')));
 });
 
 test('add: 입력 검사', () => {
   const d = repo();
   ok(d, 'init');
-  assert.match(run(d, 'add', '--category', 'nope', '--title', 't', '--why', 'w', '--when', 'n', '--source', 's').out, /모르는 카테고리/);
-  assert.match(run(d, 'add', '--category', 'ui-ux', '--title', 't', '--when', 'n', '--source', 's').out, /--why/);
+  const base = ['--why', 'w', '--when', 'n', '--case', 'c', '--apply', 'a', '--source', 's'];
+  assert.match(run(d, 'add', '--category', 'nope', '--slug', 'x', '--title', 't', ...base).out, /모르는 카테고리/);
+  assert.match(run(d, 'add', '--category', 'ui-ux', '--slug', 'Bad_Slug', '--title', 't', ...base).out, /--slug 는 영문/);
+  assert.match(run(d, 'add', '--category', 'ui-ux', '--title', 't', ...base).out, /--slug 가 필요하다/);
+  assert.match(run(d, 'add', '--category', 'ui-ux', '--slug', 'x', '--title', 't', '--why', 'w', '--when', 'n', '--apply', 'a', '--source', 's').out, /--case 가 필요하다/);
+  assert.match(run(d, 'add', '--category', 'ui-ux', '--slug', 'x', '--title', 't', '--why', 'w', '--when', 'n', '--case', 'c', '--source', 's').out, /--apply 가 필요하다/);
   assert.match(add(d, '칩은 끝까지 넘겨야 할까?').out, /질문형/);
   assert.match(add(d, 't', '--date', '2026/10/18').out, /YYYY-MM-DD/);
-  // 출처에 날짜를 넣으면 앞에 붙는 날짜와 둘이 된다 (v0.2.0 이하의 버그)
-  assert.match(run(d, 'add', '--category', 'ui-ux', '--title', 't', '--why', 'w', '--when', 'n', '--source', '2026-09-30, 8bc3c37').out, /--date 로/);
-  // 제안 형식 "제목 — 왜" 를 통째로 제목에 넣은 실수
   assert.match(add(d, '자동 포커스는 마우스 기기에서만 — 안드로이드는 코드 focus() 에도 키보드를 올린다').out, /' — '/);
+  assert.match(run(d, 'add', '--category', 'ui-ux', '--slug', 'x', '--title', 't', '--why', 'w', '--when', 'n', '--case', 'c', '--apply', 'a',
+    '--source', '2026-09-30, 8bc3c37').out, /--date 로/);
 });
 
 test('lint: 오류와 경고', () => {
   const d = repo();
   ok(d, 'init');
-  write(d, `${L}/ui-ux.md`, [
-    '# ui-ux', '',
-    '## 필드가 빠진 항목', '', '- 왜: 이유', '',
-    '## 출처에 날짜가 없는 항목', '', '- 왜: a', '- 언제: b', '- 출처: 어제 작업', '',
-    `## ${CHIPS}`, '', '- 왜: a', '- 언제: b', '- 출처: 2026-10-18, x', '',
-    '## 모바일 칩 가로 스크롤은 화면 끝까지 넘긴다', '', '- 왜: a', '- 언제: b', '- 출처: 2026-10-18, x', '',
-    '## 정말 그럴까?', '', '- 왜: a', '- 언제: b', '- 출처: 2026-10-18, x', '',
-    '## 제목에 이유를 붙였다 — 이건 왜 필드로', '', '- 왜: a', '- 언제: b', '- 출처: 2026-10-18, x', '',
-    '## 출처에 날짜가 두 번 붙은 항목', '', '- 왜: a', '- 언제: b', '- 출처: 2026-10-18, 2026-09-30, 8bc3c37', '',
-    '```md', '## 코드 블록 안의 제목은 항목이 아니다', '```', '',
-  ].join('\n'));
-  write(d, `${L}/frontend.md`, `# frontend\n\n## ${CHIPS}.\n\n- 왜: a\n- 언제: b\n- 출처: 2026-10-18, x\n`);
-  write(d, `${L}/random.md`, '# random\n');
+  write(d, `${L}/ui-ux/missing-fields.md`, '# 필드가 빠진 항목\n\n## 요약\n\n- 왜: 이유\n');
+  write(d, `${L}/ui-ux/no-date.md`, itemText({ title: '어제 한 일을 적어 둔다', sources: ['어제 작업'] }));
+  write(d, `${L}/ui-ux/chips.md`, itemText({ title: CHIPS }));
+  write(d, `${L}/ui-ux/chips-short.md`, itemText({ title: '모바일 칩 가로 스크롤은 화면 끝까지 넘긴다' }));
+  write(d, `${L}/ui-ux/question.md`, itemText({ title: '정말 그럴까?' }));
+  write(d, `${L}/ui-ux/dash.md`, itemText({ title: '제목에 이유를 붙였다 — 이건 왜 필드로' }));
+  write(d, `${L}/ui-ux/double-date.md`, itemText({ title: '출처에 날짜가 두 번 붙은 항목', sources: ['2026-10-18, 2026-09-30, 8bc3c37'] }));
+  write(d, `${L}/ui-ux/empty-case.md`, itemText({ title: '사례가 비어 있는 항목', cases: '<!-- 채울 것 -->', apply: '' }));
+  write(d, `${L}/ui-ux/code-block.md`, itemText({ title: '코드 블록 안의 제목은 절이 아니다', cases: '```md\n# 가짜 제목\n## 적용\n```' }));
+  write(d, `${L}/ui-ux/Bad_Name.md`, itemText({ title: '파일 이름이 슬러그가 아닌 항목' }));
+  write(d, `${L}/frontend/chips.md`, itemText({ title: `${CHIPS}.` }));
+  write(d, `${L}/random/x.md`, itemText({ title: '모르는 카테고리' }));
+  write(d, `${L}/stray.md`, '# 폴더 밖 항목\n');
+  write(d, `${L}/testing.md`, '# testing\n\n## 옛 형식 항목\n');
 
   const r = run(d, 'lint');
   assert.equal(r.code, 1, r.out);
-  assert.match(r.out, /✗ docs\/learnings\/ui-ux\.md:3 .*'언제' 없음/);
-  assert.match(r.out, /✗ docs\/learnings\/ui-ux\.md:3 .*'출처' 없음/);
-  assert.match(r.out, /✗ docs\/learnings\/ui-ux\.md:7 .*날짜/);
-  assert.match(r.out, /✗ docs\/learnings\/frontend\.md:3 .*같은 제목.*ui-ux\.md:13/);
-  assert.match(r.out, /! docs\/learnings\/ui-ux\.md:19 .*비슷한 제목.*ui-ux\.md:13/);
-  assert.match(r.out, /! docs\/learnings\/ui-ux\.md:25 .*질문형/);
-  assert.match(r.out, /! docs\/learnings\/ui-ux\.md:31 .*' — '/);
-  assert.match(r.out, /! docs\/learnings\/ui-ux\.md:37 .*날짜가 둘/);
-  assert.match(r.out, /✗ docs\/learnings\/random\.md .*모르는 카테고리/);
-  assert.match(r.out, /✗ docs\/learnings\/README\.md .*색인/);
-  assert.doesNotMatch(r.out, /코드 블록 안의/);
+  const has = (re) => assert.match(r.out, re);
+  has(/✗ docs\/learnings\/ui-ux\/missing-fields\.md:1 .*'- 출처:' 없음/);
+  has(/✗ docs\/learnings\/ui-ux\/missing-fields\.md:1 .*'## 사례' 절 없음/);
+  has(/✗ docs\/learnings\/ui-ux\/missing-fields\.md:1 .*'## 적용' 절 없음/);
+  has(/✗ docs\/learnings\/ui-ux\/missing-fields\.md:3 .*'- 언제:' 없음/);
+  has(/✗ docs\/learnings\/ui-ux\/no-date\.md:3 .*날짜로 시작/);
+  // 카테고리 순(기본 목록 순)으로 읽으므로 뒤에 나온 frontend 쪽이 걸린다
+  has(/✗ docs\/learnings\/frontend\/chips\.md:1 .*슬러그 중복: docs\/learnings\/ui-ux\/chips\.md/);
+  has(/✗ docs\/learnings\/frontend\/chips\.md:1 .*같은 제목: docs\/learnings\/ui-ux\/chips\.md:1/);
+  has(/! docs\/learnings\/ui-ux\/chips\.md:1 .*비슷한 제목: docs\/learnings\/ui-ux\/chips-short\.md:1/);
+  has(/! docs\/learnings\/ui-ux\/question\.md:1 .*질문형/);
+  has(/! docs\/learnings\/ui-ux\/dash\.md:1 .*' — '/);
+  has(/! docs\/learnings\/ui-ux\/double-date\.md:3 .*날짜가 둘/);
+  has(/! docs\/learnings\/ui-ux\/empty-case\.md:\d+ .*사례가 비어 있다/);
+  has(/! docs\/learnings\/ui-ux\/empty-case\.md:\d+ .*적용이 비어 있다/);
+  has(/✗ docs\/learnings\/ui-ux\/Bad_Name\.md .*영문 슬러그/);
+  has(/✗ docs\/learnings\/random .*모르는 카테고리 폴더/);
+  has(/✗ docs\/learnings\/stray\.md .*카테고리 폴더 안에/);
+  has(/✗ docs\/learnings\/testing\.md .*옛 형식.*migrate/);
+  has(/✗ docs\/learnings\/README\.md .*색인/);
+  assert.doesNotMatch(r.out, /code-block\.md/);
 });
 
 test('lint --fix: 색인만 고친다', () => {
   const d = repo();
   ok(d, 'init');
-  write(d, `${L}/testing.md`, '# testing\n\n## 실패하는 테스트부터 쓴다\n\n- 왜: a\n- 언제: b\n- 출처: 2026-10-18, x\n');
+  write(d, `${L}/testing/fail-first.md`, itemText({ title: '실패하는 테스트부터 쓴다' }));
   assert.match(run(d, 'lint').out, /색인/);
   assert.match(ok(d, 'lint', '--fix'), /색인 갱신/);
-  assert.match(read(d, `${L}/README.md`), /\| \[`testing`\]\(testing\.md\) \|.*\| 1 \|/);
+  assert.ok(read(d, `${L}/README.md`).includes('- [실패하는 테스트부터 쓴다](testing/fail-first.md)'));
   assert.match(ok(d, 'lint'), /오류 0, 경고 0/);
 });
 
@@ -223,14 +254,56 @@ test('category: 추가 카테고리는 근거와 함께 색인에 남는다', ()
   assert.match(run(d, 'category', 'ui-ux', '--scope', 's', '--reason', 'r').out, /이미 있는/);
   assert.match(run(d, 'category', 'Mobile App', '--scope', 's', '--reason', 'r').out, /id 형식/);
   ok(d, 'category', 'mobile', '--scope', '앱 플랫폼·빌드·스토어', '--reason', '어디에도 안 맞는 항목 3개 (스토어 심사 등)');
-  const readme = read(d, `${L}/README.md`);
-  assert.match(readme, /## 추가 카테고리[\s\S]*\| `mobile` \| 앱 플랫폼·빌드·스토어 \| 어디에도 안 맞는 항목 3개/);
+  assert.match(read(d, `${L}/README.md`), /## 추가 카테고리[\s\S]*\| `mobile` \| 앱 플랫폼·빌드·스토어 \| 어디에도 안 맞는 항목 3개/);
 
-  ok(d, 'add', '--category', 'mobile', '--title', '스토어 심사 전에 테스트 계정을 준비한다', '--why', 'w', '--when', 'n', '--source', 's');
-  // 재생성해도 추가 카테고리가 유지된다
+  assert.equal(addStdin(d, item({ category: 'mobile', slug: 'store-review-account', title: '스토어 심사 전에 테스트 계정을 준비한다' })).code, 0);
   ok(d, 'lint', '--fix');
-  assert.match(read(d, `${L}/README.md`), /\| \[`mobile`\]\(mobile\.md\) \|.*\| 1 \|/);
+  assert.match(read(d, `${L}/README.md`), /^## \[`mobile`\]\(mobile\/\) — 앱 플랫폼·빌드·스토어 \(1\)$/m);
+  assert.match(read(d, `${L}/README.md`), /## 추가 카테고리/); // 재생성해도 유지
   assert.match(ok(d, 'lint'), /오류 0, 경고 0/);
+});
+
+test('migrate: 옛 형식(카테고리 = 파일)을 카테고리 폴더 + 항목 파일로', () => {
+  const d = repo();
+  ok(d, 'init');
+  write(d, `${L}/ui-ux.md`, [
+    '# ui-ux', '', '> 범위', '',
+    `## ${CHIPS}`, '', '- 왜: 신호가 된다', '- 언제: 가로 스크롤', '- 출처: 2026-09-26, a1b2c3d', '- 출처: 2026-10-01, 다른 작업', '',
+    '## 터치 영역은 44px 이상으로 잡는다', '', '- 왜: 손가락', '- 언제: 버튼', '- 출처: 2026-09-27, b2c3d4e', '',
+    '```css', '## 코드 안 제목은 항목이 아니다', '.btn { min-height: 44px; }', '```', '',
+  ].join('\n'));
+  write(d, `${L}/testing.md`, '# testing\n\n## 실패하는 테스트부터 쓴다\n\n- 왜: a\n- 언제: b\n- 출처: 2026-09-28, c\n');
+  assert.match(run(d, 'lint').out, /옛 형식/);
+  assert.match(add(d, '새 항목').out, /먼저 `migrate`/);
+
+  // 인자 없이: 슬러그를 채울 JSON 만 출력하고 아무것도 바꾸지 않는다
+  const plan = ok(d, 'migrate');
+  const json = JSON.parse(plan.slice(plan.indexOf('[')));
+  assert.deepEqual(json.map((x) => x.from), ['ui-ux.md:5', 'ui-ux.md:12', 'testing.md:3']);
+  assert.ok(json.every((x) => x.slug === '' && x.title));
+  assert.ok(fs.existsSync(path.join(d, L, 'ui-ux.md')));
+
+  const slugs = ['mobile-chip-scroll-edge', 'touch-target-44px', 'fail-first'];
+  const send = (list) => spawnSync('node', [SCRIPT, 'migrate', '--stdin'], { cwd: d, encoding: 'utf8', input: JSON.stringify(list) });
+  let r = send(json.map((x, i) => ({ ...x, slug: i === 2 ? '' : slugs[i] })));
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /testing\.md:3 .*슬러그가 없다/);
+  assert.ok(fs.existsSync(path.join(d, L, 'ui-ux.md')));
+
+  r = send(json.map((x, i) => ({ ...x, slug: slugs[i] })));
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(!fs.existsSync(path.join(d, L, 'ui-ux.md')) && !fs.existsSync(path.join(d, L, 'testing.md')));
+  const chips = read(d, `${L}/ui-ux/mobile-chip-scroll-edge.md`);
+  assert.ok(chips.startsWith(`# ${CHIPS}\n\n- 출처: 2026-09-26, a1b2c3d\n- 출처: 2026-10-01, 다른 작업\n\n## 요약\n\n- 왜: 신호가 된다\n- 언제: 가로 스크롤\n\n## 사례\n\n<!--`), chips);
+  // 필드 아닌 줄(예시 코드)은 사례로 옮긴다
+  assert.match(read(d, `${L}/ui-ux/touch-target-44px.md`), /## 사례\n\n```css\n## 코드 안 제목은 항목이 아니다\n\.btn \{ min-height: 44px; \}\n```\n\n## 적용/);
+  assert.ok(read(d, `${L}/README.md`).includes('- [실패하는 테스트부터 쓴다](testing/fail-first.md)'));
+
+  const lint = ok(d, 'lint');
+  assert.match(lint, /오류 0/);
+  assert.match(lint, /mobile-chip-scroll-edge\.md:\d+ .*사례가 비어 있다/);
+  assert.doesNotMatch(lint, /touch-target-44px\.md:\d+ .*사례가 비어 있다/);
+  assert.match(ok(d, 'migrate'), /옮길 옛 형식 파일이 없다/);
 });
 
 test('hints: 배움이 숨어 있기 쉬운 커밋·주석·완료 일감을 나열한다', () => {
@@ -453,14 +526,16 @@ test('add: 출처가 커밋 해시로 시작하고 --date 가 없으면 그 커�
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'fix: 옛 수정'],
     { cwd: d, env: { ...process.env, GIT_AUTHOR_DATE: '2026-09-26T12:00:00', GIT_COMMITTER_DATE: '2026-09-26T12:00:00' } });
   const hash = git(d, 'rev-parse', '--short', 'HEAD').trim();
-  const out = ok(d, 'add', '--category', 'git', '--title', '옛 커밋에서 배운 것', '--why', 'w', '--when', 'n', '--source', `${hash} 옛 수정`);
+  const g = (slug, title, ...rest) => ok(d, 'add', '--category', 'git', '--slug', slug, '--title', title, '--why', 'w', '--when', 'n',
+    '--case', 'c', '--apply', 'a', ...rest);
+  const out = g('old-commit', '옛 커밋에서 배운 것', '--source', `${hash} 옛 수정`);
   assert.match(out, new RegExp(`날짜: 커밋 ${hash} 의 날짜 2026-09-26`));
-  assert.match(read(d, `${L}/git.md`), new RegExp(`- 출처: 2026-09-26, ${hash} 옛 수정`));
+  assert.match(read(d, `${L}/git/old-commit.md`), new RegExp(`- 출처: 2026-09-26, ${hash} 옛 수정`));
   // --date 가 있으면 그것을 쓴다
-  ok(d, 'add', '--category', 'git', '--title', '날짜를 직접 준 항목', '--why', 'w', '--when', 'n', '--source', `${hash} x`, '--date', '2026-01-02');
-  assert.match(read(d, `${L}/git.md`), /- 출처: 2026-01-02, /);
+  g('given-date', '날짜를 직접 준 항목', '--source', `${hash} x`, '--date', '2026-01-02');
+  assert.match(read(d, `${L}/git/given-date.md`), /- 출처: 2026-01-02, /);
   // 찾을 수 없는 해시면 오늘 날짜로 쓰고 알려 준다
-  const miss = ok(d, 'add', '--category', 'git', '--title', '없는 커밋을 가리킨 항목', '--why', 'w', '--when', 'n', '--source', 'deadbeef0 작업');
+  const miss = g('missing-commit', '없는 커밋을 가리킨 항목', '--source', 'deadbeef0 작업');
   assert.match(miss, /커밋 deadbeef0 을 찾지 못했다 — 오늘 날짜로/);
 });
 

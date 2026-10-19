@@ -5,17 +5,28 @@
 [![license](https://img.shields.io/github/license/taeksoolee/work-learnings)](LICENSE)
 
 > **English summary** — An agent skill (Claude Code tested) that collects *what you can learn* from your work —
-> generalizable lessons, not tasks — as markdown inside the repository: `docs/learnings/<category>.md`, one file per
-> standard category (`ui-ux`, `frontend`, `testing`, `git`, `ai-collab`, …). The agent proposes "things to learn" at the
+> generalizable lessons, not tasks — as markdown inside the repository: `docs/learnings/<category>/<slug>.md`, one folder
+> per standard category (`ui-ux`, `frontend`, `testing`, `git`, `ai-collab`, …) and one file per lesson, each with a
+> summary, the concrete case it came from, and how to spot it elsewhere. The agent proposes "things to learn" at the
 > end of a work report and records only the ones you approve; it can also look for candidates in the repo's fix/revert
-> commits and workaround comments. A zero-dependency Node script handles add / list / lint (required fields, duplicate
-> and similar titles, generated index). Rules and docs are in Korean.
+> commits and workaround comments. A zero-dependency Node script handles add / migrate / list / lint (required sections,
+> duplicate and similar titles, generated index). Rules and docs are in Korean.
 > Install: `npx skills add taeksoolee/work-learnings --skill work-learnings`.
 
-작업 중에 **사용자가 배울 수 있는 것**을 저장소 안 `docs/learnings/` 에 카테고리별로 쌓는 agent skill.
+작업 중에 **사용자가 배울 수 있는 것**을 저장소 안 `docs/learnings/` 에 쌓는 agent skill.
 일감(할 일)을 뽑는 도구가 아니라 배움을 위한 도구다.
 
-예: "모바일에서 칩 가로 스크롤은 오른쪽 여백 없이 화면 끝까지 넘긴다 — 끝이 잘려 보여야 더 있다는 신호가 된다."
+```
+docs/learnings/
+  README.md                                  # 색인 — 카테고리별 제목 목록 (스크립트가 만든다)
+  ui-ux/
+    mobile-chip-scroll-edge.md               # 항목 하나 = 파일 하나: 요약 · 사례 · 적용
+  devops-ci/
+    actions-node-runtime-vs-node-version.md
+```
+
+예: "모바일에서 칩 가로 스크롤은 오른쪽 여백 없이 화면 끝까지 넘긴다" — 요약(왜·언제)에 더해, 실제로 무엇을 했더니
+무엇이 보였고 어떻게 고쳤는지(사례), 다른 프로젝트에서 이 상황을 알아보는 신호(적용)까지 한 파일에.
 
 - **제안 → 승인**: AI 가 작업 보고 끝에 "배울 거리" 후보를 제안하고, 사용자가 고른 것만 기록한다. 자동 기록은 없다.
 - **저장소에서 찾기**: "이 저장소에서 배울 거리 찾아줘" 하면 고친·되돌린 커밋과 주의·우회 주석을 단서로 후보를 제안한다.
@@ -36,7 +47,7 @@ npx -y skills add taeksoolee/work-learnings --skill work-learnings --agent claud
 특정 버전으로 고정하려면 태그를 붙인다 (버전 목록과 변경 내역: [Releases](https://github.com/taeksoolee/work-learnings/releases), [CHANGELOG](CHANGELOG.md)):
 
 ```sh
-npx -y skills add "taeksoolee/work-learnings#v0.3.2" --skill work-learnings --agent claude-code --copy --yes
+npx -y skills add "taeksoolee/work-learnings#v0.4.0" --skill work-learnings --agent claude-code --copy --yes
 ```
 
 `.claude/skills/work-learnings/` 에 복사된다. **설치본은 저장소에 커밋한다** (`skills-lock.json` 도 함께) — 작고,
@@ -99,7 +110,8 @@ skill 은 description 매칭으로만 로드된다 — "작업 중 배울 만한
   막혔다가 풀린 지점, 겪을 뻔한 함정. 이 세션이 새로 알아낸 것만이 아니라 사용자가 이번에 접한 것이 대상이다.
 - 기준: "다른 프로젝트에서 이걸 몰랐다면 실제로 시간을 잃었을까". 통과한 것은 전부(많아야 3개), 없으면 섹션을 쓰지 않는다.
   이 프로젝트만의 결정·할 일·상식은 제외.
-- 기록은 사용자가 고른 것만, work-learnings skill(`.claude/skills/work-learnings/rules.md`)로 한다.
+- 기록은 사용자가 고른 것만, work-learnings skill(`.claude/skills/work-learnings/rules.md`)로 한다 — 요약에 더해
+  이번 작업에서 실제로 일어난 사례(상황·증상·원인·해결)를 구체적으로.
 ```
 
 **판단 기준은 이 블록에 있어야 한다.** 최종 보고를 쓰는 순간에 보이는 것은 진입 블록뿐이다 — rules.md 는 skill 이
@@ -108,6 +120,20 @@ skill 은 description 매칭으로만 로드된다 — "작업 중 배울 만한
 repo-tickets 와 함께 쓰면 두 진입 블록을 나란히 둔다. 기록의 출처에 일감 참조(`[[이름]]`)를 쓰면 repo-tickets `lint` 가
 `docs/learnings/` 의 그 참조도 검사한다 — 없는 일감이면 오류다. 의도된 동작이다 (일감 이름은 바뀌지 않으므로 깨진 참조는 실수다).
 skill 설치본 자체는 이 검사에 걸리지 않는다 (위 "설치").
+
+## v0.3 이하에서 올리기
+
+v0.4.0 부터 카테고리는 폴더, 항목 하나는 파일 하나다 (전에는 카테고리 하나가 파일 하나, 항목에 사례가 없었다).
+재설치 후 `lint` 가 옛 형식 파일을 오류로 알려 준다. 옮기는 절차는 rules.md "옛 형식에서 옮기기":
+
+```sh
+W=.claude/skills/work-learnings/scripts/learnings.mjs
+node $W migrate              # 옮길 항목을 [{"from","title","slug": ""}] 로 출력 (아무것도 바꾸지 않는다)
+node $W migrate --stdin < slugs.json   # 슬러그를 채워서 — 항목 파일을 만들고 옛 파일을 지운다
+node $W lint                 # 사례·적용이 빈 항목을 경고 → 출처를 읽고 채울 내용을 사용자에게 제안
+```
+
+진입 블록 마지막 줄도 바뀌었다 (사례를 구체적으로) — README "진입 블록" 대로 교체한다.
 
 ## CI (선택)
 

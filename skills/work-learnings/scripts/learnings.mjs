@@ -25,7 +25,8 @@ const CATEGORIES = [
 ];
 const ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const FIELDS = ['왜', '언제', '출처'];
+// 항목 하나 = 파일 하나: `docs/learnings/<카테고리>/<슬러그>.md`. 절은 요약(왜·언제)·사례·적용.
+const SECTIONS = ['요약', '사례', '적용'];
 const FIELD_RE = /^- (왜|언제|출처):\s*(.*)$/;
 const TITLE_DASH_RE = /\s[—–]\s/;
 const LEADING_DATE_RE = /^\d{4}-\d{2}-\d{2}\b/;
@@ -75,6 +76,8 @@ const DONE_DIR = 'docs/tickets/done';
 const DONE_ENTRY_RE = /^\d{8}_\d{3}_[a-z]+-[a-z0-9-]+(\.md)?$/;
 // 제목이 이 말로 시작할 때만 — "ETag/304: 재현하지 않는다" 같은 결정 문장을 절로 오인하지 않게.
 const DONE_SECTION_RE = /^#{2,6}\s+((?:원인|재현|배운|교훈|함정|경위|root cause|lessons?)(?![가-힣]*(?:하지|않)).*?)\s*$/i;
+
+const COMMENT_ONLY_RE = /^\s*<!--[\s\S]*?-->\s*$/;
 
 // ---------- 공통 ----------
 
@@ -178,33 +181,40 @@ function categories(ctx) {
     ...extraCategories(ctx).map(([id, scope, reason]) => ({ id, scope, reason }))];
 }
 
-// 항목: { category, file, title, line, fields: { 왜: [..], 언제: [..], 출처: [..] } }. 코드 블록 안은 보지 않는다.
-function parseItems(category, file, text) {
-  const items = [];
+// 항목 파일 하나를 읽는다. 코드 블록 안의 `#` 는 제목이 아니다.
+// { category, slug, file, title, titleLine, sources: [{text, line}], why: [], when: [], sections: { 요약|사례|적용: { line, body } } }
+function parseItem(category, file, text) {
+  const it = { category, slug: path.basename(file, '.md'), file, title: null, titleLine: 1, sources: [], why: [], when: [], sections: {} };
   let fence = false;
-  let cur = null;
+  let cur = null; // 지금 읽는 절
   text.split('\n').forEach((line, i) => {
-    if (/^\s*(```|~~~)/.test(line)) fence = !fence;
-    if (fence) return;
-    const h = line.match(/^## (.+?)\s*$/);
-    if (h) {
-      cur = { category, file, title: h[1], line: i + 1, fields: { 왜: [], 언제: [], 출처: [] } };
-      items.push(cur);
-      return;
+    const isFence = /^\s*(```|~~~)/.test(line);
+    if (isFence) fence = !fence;
+    if (!fence && !isFence) {
+      const h1 = line.match(/^# (.+?)\s*$/);
+      if (h1 && it.title === null) { it.title = h1[1]; it.titleLine = i + 1; return; }
+      const h2 = line.match(/^## (.+?)\s*$/);
+      if (h2) { cur = h2[1]; it.sections[cur] = { line: i + 1, body: [] }; return; }
+      const f = line.match(FIELD_RE);
+      if (f && f[1] === '출처' && cur === null) { it.sources.push({ text: f[2].trim(), line: i + 1 }); return; }
+      if (f && cur === '요약' && f[1] !== '출처') { (f[1] === '왜' ? it.why : it.when).push(f[2].trim()); }
     }
-    const f = cur && line.match(FIELD_RE);
-    if (f) cur.fields[f[1]].push(f[2].trim());
+    if (cur && it.sections[cur] && line.trim() && !COMMENT_ONLY_RE.test(line)) it.sections[cur].body.push(line);
   });
-  return items;
+  return it;
 }
 
 function load(ctx) {
   const cats = categories(ctx);
   const items = [];
   for (const c of cats) {
-    const file = path.join(ctx.dir, `${c.id}.md`);
-    const text = readText(file);
-    if (text !== null) items.push(...parseItems(c.id, file, text));
+    const dir = path.join(ctx.dir, c.id);
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) continue;
+    for (const name of fs.readdirSync(dir).sort()) {
+      if (!name.endsWith('.md')) continue;
+      const file = path.join(dir, name);
+      if (fs.statSync(file).isFile()) items.push(parseItem(c.id, file, readText(file) ?? ''));
+    }
   }
   return { cats, items };
 }
@@ -213,30 +223,68 @@ function requireInit(ctx) {
   if (!fs.existsSync(path.join(ctx.dir, 'README.md'))) fail(`${rel(ctx, ctx.dir)}/README.md 가 없다 — 먼저 \`init\``);
 }
 
+const firstDate = (it) => it.sources[0]?.text.match(LEADING_DATE_RE)?.[0] ?? '';
+// 색인·list 의 순서: 그 일이 있던 날, 그다음 슬러그
+const byDate = (a, b) => firstDate(a).localeCompare(firstDate(b)) || a.slug.localeCompare(b.slug);
+
+// ---------- 옛 형식 (v0.3 이하: 카테고리 = 파일 하나) ----------
+
+// `docs/learnings/<카테고리>.md` 안의 `## 제목` 항목들. 필드 줄이 아닌 줄(예시 코드 등)은 사례로 옮긴다.
+function loadLegacy(ctx, cats) {
+  const out = [];
+  for (const c of cats) {
+    const file = path.join(ctx.dir, `${c.id}.md`);
+    const text = readText(file);
+    if (text === null) continue;
+    let fence = false;
+    let cur = null;
+    text.split('\n').forEach((line, i) => {
+      const isFence = /^\s*(```|~~~)/.test(line);
+      if (isFence) fence = !fence;
+      const h = !fence && !isFence && line.match(/^## (.+?)\s*$/);
+      if (h) {
+        cur = { category: c.id, file, line: i + 1, title: h[1], why: [], when: [], sources: [], extra: [] };
+        out.push(cur);
+        return;
+      }
+      if (!cur) return;
+      const f = !fence && !isFence && line.match(FIELD_RE);
+      if (f) ({ 왜: cur.why, 언제: cur.when, 출처: cur.sources })[f[1]].push(f[2].trim());
+      else cur.extra.push(line);
+    });
+  }
+  for (const it of out) {
+    while (it.extra.length && !it.extra[0].trim()) it.extra.shift();
+    while (it.extra.length && !it.extra.at(-1).trim()) it.extra.pop();
+  }
+  return out;
+}
+
 // ---------- 색인 ----------
 
 function renderIndex(ctx, cats, items) {
   const rules = path.join(SKILL_DIR, 'rules.md');
   const inside = !path.relative(ctx.root, rules).startsWith('..');
   const where = inside ? `[\`${path.relative(ctx.root, rules)}\`](${path.relative(ctx.dir, rules)})` : '`rules.md`';
-  const count = (id) => items.filter((it) => it.category === id).length;
+  const mine = (id) => items.filter((it) => it.category === id).sort(byDate);
   const lines = [
     INDEX_MARK,
     '# learnings',
     '',
-    '작업하며 배운, 다른 프로젝트에서도 통하는 교훈을 카테고리별로 모은다.',
+    '작업하며 배운, 다른 프로젝트에서도 통하는 교훈을 카테고리별로 모은다. 카테고리 = 폴더, 항목 하나 = 파일 하나.',
     `기록 규칙은 work-learnings skill 의 ${where} 를 따른다. 이 폴더에 규칙을 따로 적지 않는다.`,
     '',
-    '**읽는 법**: 항목 제목(`##`)이 곧 배운 것이다. 제목만 훑고, 필요한 것만 `왜`·`언제` 를 읽는다.',
+    '**읽는 법**: 아래 제목이 곧 배운 것이다. 제목만 훑고, 필요한 것만 열어 사례를 읽는다.',
     '',
   ];
-  // 항목이 있는 카테고리만 표로. 나머지는 한 줄 — 표준 목록은 보이되 빈 행으로 시끄럽지 않게.
-  const filled = cats.filter((c) => count(c.id));
-  if (filled.length) {
-    lines.push('| 카테고리 | 범위 | 항목 |', '|---|---|---|',
-      ...filled.map((c) => `| [\`${c.id}\`](${c.id}.md) | ${c.scope} | ${count(c.id)} |`), '');
+  // 항목이 있는 카테고리만 절로. 나머지는 한 줄 — 표준 목록은 보이되 빈 절로 시끄럽지 않게.
+  for (const c of cats) {
+    const list = mine(c.id);
+    if (!list.length) continue;
+    lines.push(`## [\`${c.id}\`](${c.id}/) — ${c.scope} (${list.length})`, '',
+      ...list.map((it) => `- [${it.title ?? it.slug}](${c.id}/${it.slug}.md)`), '');
   }
-  const empty = cats.filter((c) => !count(c.id));
+  const empty = cats.filter((c) => !mine(c.id).length);
   if (empty.length) lines.push(`아직 항목이 없는 카테고리: ${empty.map((c) => `\`${c.id}\``).join(' · ')}`, '');
   const extra = cats.filter((c) => c.reason);
   if (extra.length) {
@@ -250,6 +298,15 @@ function writeIndex(ctx, cats, items) {
   fs.writeFileSync(path.join(ctx.dir, 'README.md'), renderIndex(ctx, cats, items));
 }
 
+function renderItem(it) {
+  const sources = (it.sources ?? [`${it.date}, ${it.source}`]).map((x) => `- 출처: ${x}`);
+  const why = (Array.isArray(it.why) ? it.why : [it.why]).map((x) => `- 왜: ${x}`);
+  const when = (Array.isArray(it.when) ? it.when : [it.when]).map((x) => `- 언제: ${x}`);
+  return [`# ${it.title}`, '', ...sources, '', '## 요약', '', ...why, ...when, '',
+    '## 사례', '', it.case || '<!-- 상황 → 증상 → 원인 → 해결. 이번 작업에서 실제로 일어난 일을 구체적으로 (rules.md "사례") -->', '',
+    '## 적용', '', it.apply || '<!-- 다른 프로젝트에서 이 상황을 알아보는 신호 (rules.md "적용") -->', ''].join('\n');
+}
+
 // ---------- 명령 ----------
 
 function cmdInit(ctx) {
@@ -260,30 +317,33 @@ function cmdInit(ctx) {
     fail(`${rel(ctx, readme)} 가 이미 있고 work-learnings 색인이 아니다 — 내용을 옮기거나 지운 뒤 다시 \`init\``);
   }
   const { cats, items } = load(ctx);
+  if (loadLegacy(ctx, cats).length) console.log('옛 형식(카테고리 = 파일 하나) 항목이 있다 — `migrate` 로 옮긴다');
   writeIndex(ctx, cats, items);
   console.log(`${text === null ? '색인 생성' : '색인 갱신'}: ${rel(ctx, readme)}`);
 }
 
-// --stdin: 필드를 JSON 으로 받는다 — 백틱·`${…}` 를 셸 이스케이프 없이. 배열이면 여러 항목을 한 번에 ("전부" 승인).
-function readStdinItems(opt) {
+// --stdin: 필드를 JSON 으로 받는다 — 여러 줄의 사례, 백틱·`${…}` 를 셸 이스케이프 없이. 배열이면 여러 항목을 한 번에.
+function readStdinItems() {
   let data;
-  try { data = JSON.parse(fs.readFileSync(0, 'utf8')); } catch { fail('--stdin 은 JSON 객체 {"category","title","why","when","source","date"?} 또는 그 배열'); }
+  try { data = JSON.parse(fs.readFileSync(0, 'utf8')); } catch { fail('--stdin 은 JSON 객체 {"category","slug","title","why","when","case","apply","source","date"?} 또는 그 배열'); }
   const list = Array.isArray(data) ? data : [data];
   if (!list.length || list.some((x) => !x || typeof x !== 'object' || Array.isArray(x))) fail('--stdin 은 JSON 객체 또는 객체 배열');
   return list;
 }
 
-// 한 항목의 필드를 검사해 { category, title, why, when, source, date } 로. 어긋나면 멈춘다.
+// 한 항목의 필드를 검사한다. 어긋나면 멈춘다. 사례·적용은 여러 줄이어도 된다.
 function checkItem(cats, opt, label) {
   const at = label ? `${label}: ` : '';
-  const need = (key) => {
+  const need = (key, multiline = false) => {
     const v = typeof opt[key] === 'number' ? String(opt[key]) : opt[key];
     if (typeof v !== 'string' || !v.trim()) fail(`${at}--${key} 가 필요하다`);
-    if (/\n/.test(v)) fail(`${at}--${key} 는 한 줄로`);
-    return v.trim();
+    if (!multiline && /\n/.test(v)) fail(`${at}--${key} 는 한 줄로`);
+    return multiline ? v.replace(/^\n+|\s+$/g, '') : v.trim();
   };
   const category = need('category');
   if (!cats.some((c) => c.id === category)) fail(`${at}모르는 카테고리: ${category} — ${cats.map((c) => c.id).join(', ')}`);
+  const slug = need('slug');
+  if (!ID_RE.test(slug)) fail(`${at}--slug 는 영문 소문자·숫자·하이픈 (예: mobile-chip-scroll-edge)`);
   const title = need('title');
   if (/[?？]$/.test(title)) fail(`${at}제목은 질문형이 아니라 배운 것을 한 줄 규칙으로`);
   if (TITLE_DASH_RE.test(title)) fail(`${at}제목에 ' — ' 가 있다 — 제안의 '제목 — 왜' 에서 뒤쪽은 --why 로 (제목은 배운 것 하나)`);
@@ -291,14 +351,15 @@ function checkItem(cats, opt, label) {
   if (LEADING_DATE_RE.test(source)) fail(`${at}--source 에 날짜를 넣지 않는다 — 날짜는 --date 로 (출처 줄 맨 앞에 붙는다)`);
   const date = opt.date === undefined ? null : String(opt.date);
   if (date !== null && !DATE_RE.test(date)) fail(`${at}--date 는 YYYY-MM-DD`);
-  return { category, title, why: need('why'), when: need('when'), source, date };
+  return { category, slug, title, why: need('why'), when: need('when'), case: need('case', true), apply: need('apply', true), source, date };
 }
 
 function cmdAdd(ctx, pos, opt) {
   requireInit(ctx);
   const { cats, items } = load(ctx);
+  if (loadLegacy(ctx, cats).length) fail('옛 형식(카테고리 = 파일 하나) 항목이 남아 있다 — 먼저 `migrate`');
   const flags = Object.fromEntries(Object.entries(opt).filter(([k]) => k !== 'stdin' && k !== 'force'));
-  const raw = opt.stdin ? readStdinItems(opt).map((x) => ({ ...x, ...flags })) : [opt];
+  const raw = opt.stdin ? readStdinItems().map((x) => ({ ...x, ...flags })) : [opt];
   const batch = raw.map((x, i) => checkItem(cats, x, raw.length > 1 ? `${i + 1}번` : ''));
   // 날짜는 그 일이 있던 날 — 출처가 커밋 해시로 시작하면 그 커밋 날짜, 아니면 오늘.
   for (const it of batch) {
@@ -316,10 +377,12 @@ function cmdAdd(ctx, pos, opt) {
   let blocked = false;
   batch.forEach((it, i) => {
     const label = batch.length > 1 ? `${i + 1}번 ` : '';
-    const where = (x) => (x.file ? `${rel(ctx, x.file)}:${x.line}` : `이번 묶음 ${batch.indexOf(x) + 1}번`);
-    const same = seen.find((x) => normalize(x.title) === normalize(it.title));
+    const where = (x) => (x.file ? rel(ctx, x.file) : `이번 묶음 ${batch.indexOf(x) + 1}번`);
+    const taken = seen.find((x) => x.slug === it.slug);
+    if (taken) fail(`${label}슬러그가 이미 있다: ${where(taken)} — 슬러그는 카테고리를 통틀어 하나`);
+    const same = seen.find((x) => x.title && normalize(x.title) === normalize(it.title));
     if (same) fail(`${label}같은 제목이 이미 있다: ${where(same)} — 새로 쓰지 말고 그 항목을 갱신하라`);
-    const near = seen.filter((x) => isSimilar(x.title, it.title));
+    const near = seen.filter((x) => x.title && isSimilar(x.title, it.title));
     if (near.length && !opt.force) {
       console.error(`${label}'${it.title}' — 비슷한 항목이 있다. 같은 교훈이면 새로 쓰지 말고 그 항목을 갱신하라 (다른 교훈이면 --force):`);
       for (const x of near) console.error(`  ${where(x)}  ${x.title}`);
@@ -330,16 +393,51 @@ function cmdAdd(ctx, pos, opt) {
   if (blocked) process.exit(1);
 
   for (const it of batch) {
-    const file = path.join(ctx.dir, `${it.category}.md`);
-    const scope = cats.find((c) => c.id === it.category).scope;
-    let text = readText(file) ?? `# ${it.category}\n\n> ${scope}\n`;
-    if (!text.endsWith('\n')) text += '\n';
-    const line = text.split('\n').length + 1;
-    text += `\n## ${it.title}\n\n- 왜: ${it.why}\n- 언제: ${it.when}\n- 출처: ${it.date}, ${it.source}\n`;
-    fs.writeFileSync(file, text);
-    console.log(`기록: ${rel(ctx, file)}:${line}  ${it.title}`);
+    const file = path.join(ctx.dir, it.category, `${it.slug}.md`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, renderItem(it));
+    console.log(`기록: ${rel(ctx, file)}  ${it.title}`);
   }
   writeIndex(ctx, cats, load(ctx).items);
+}
+
+// v0.3 이하의 `<카테고리>.md` 를 `<카테고리>/<슬러그>.md` 로 옮긴다. 슬러그는 AI·사람이 정한다 (한글 제목에서 만들 수 없다).
+function cmdMigrate(ctx, pos, opt) {
+  requireInit(ctx);
+  const { cats, items } = load(ctx);
+  const legacy = loadLegacy(ctx, cats);
+  if (!legacy.length) { console.log('옮길 옛 형식 파일이 없다.'); return; }
+  const key = (it) => `${it.category}.md:${it.line}`;
+  if (!opt.stdin) {
+    console.log('옛 형식 항목이 있다. 슬러그를 채워 `migrate --stdin` 으로 다시 실행한다 (아무것도 바꾸지 않았다):\n');
+    console.log(JSON.stringify(legacy.map((it) => ({ from: key(it), title: it.title, slug: '' })), null, 2));
+    return;
+  }
+  let map;
+  try { map = JSON.parse(fs.readFileSync(0, 'utf8')); } catch { fail('--stdin 은 [{"from","slug"}] JSON 배열 (`migrate` 가 출력한 것)'); }
+  if (!Array.isArray(map)) fail('--stdin 은 JSON 배열');
+  const slugOf = new Map(map.map((x) => [x?.from, x?.slug]));
+  const taken = new Set(items.map((it) => it.slug));
+  const problems = [];
+  for (const it of legacy) {
+    const slug = slugOf.get(key(it));
+    if (!slug) problems.push(`${key(it)} '${it.title}' — 슬러그가 없다`);
+    else if (!ID_RE.test(slug)) problems.push(`${key(it)} — 슬러그 형식: ${slug}`);
+    else if (taken.has(slug)) problems.push(`${key(it)} — 슬러그 중복: ${slug}`);
+    else taken.add(slug);
+  }
+  if (problems.length) fail(`옮기지 않았다:\n  ${problems.join('\n  ')}`);
+
+  for (const it of legacy) {
+    const slug = slugOf.get(key(it));
+    const file = path.join(ctx.dir, it.category, `${slug}.md`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, renderItem({ ...it, case: it.extra.join('\n'), apply: '' }));
+    console.log(`옮김: ${key(it)} → ${rel(ctx, file)}`);
+  }
+  for (const f of new Set(legacy.map((it) => it.file))) fs.rmSync(f);
+  writeIndex(ctx, cats, load(ctx).items);
+  console.log('\n사례·적용이 비어 있는 항목은 `lint` 가 경고한다 — 출처(커밋·일감)를 읽고 채울 내용을 사용자에게 제안한다.');
 }
 
 function cmdCategory(ctx, pos, opt) {
@@ -362,10 +460,10 @@ function cmdList(ctx, pos) {
   if (only && !cats.some((c) => c.id === only)) fail(`모르는 카테고리: ${only}`);
   for (const c of cats) {
     if (only && c.id !== only) continue;
-    const mine = items.filter((it) => it.category === c.id);
+    const mine = items.filter((it) => it.category === c.id).sort(byDate);
     if (!mine.length && !only) continue;
     console.log(`\n${c.id} (${mine.length})`);
-    for (const it of mine) console.log(`  - ${it.title}`);
+    for (const it of mine) console.log(`  - ${it.title ?? '(제목 없음)'}  ${c.id}/${it.slug}.md`);
   }
   if (!items.length) console.log('\n아직 기록이 없다.');
 }
@@ -375,25 +473,46 @@ function cmdLint(ctx, pos, opt) {
   const { cats, items } = load(ctx);
   const problems = [];
   const add = (level, where, msg) => problems.push({ level, where, msg });
-  const at = (it) => `${rel(ctx, it.file)}:${it.line}`;
+  const at = (it, line = it.titleLine) => `${rel(ctx, it.file)}:${line}`;
 
-  const known = new Set(['README.md', ...cats.map((c) => `${c.id}.md`)]);
+  const ids = new Set(cats.map((c) => c.id));
   for (const ent of fs.readdirSync(ctx.dir, { withFileTypes: true })) {
-    if (ent.name.startsWith('.')) continue;
+    if (ent.name.startsWith('.') || ent.name === 'README.md') continue;
     const where = rel(ctx, path.join(ctx.dir, ent.name));
-    if (ent.isDirectory()) add('warn', where, '하위 폴더는 보지 않는다 — 카테고리는 파일 하나');
-    else if (!known.has(ent.name)) add('error', where, '모르는 카테고리 파일 — 기본 카테고리로 옮기거나 `category` 로 추가');
+    if (ent.isDirectory()) {
+      if (!ids.has(ent.name)) { add('error', where, '모르는 카테고리 폴더 — 기본 카테고리로 옮기거나 `category` 로 추가'); continue; }
+      for (const sub of fs.readdirSync(path.join(ctx.dir, ent.name), { withFileTypes: true })) {
+        if (sub.name.startsWith('.')) continue;
+        const w = `${where}/${sub.name}`;
+        if (sub.isDirectory()) add('warn', w, '하위 폴더는 보지 않는다 — 항목은 카테고리 폴더 바로 아래 파일 하나');
+        else if (!sub.name.endsWith('.md')) add('warn', w, 'md 가 아닌 파일은 보지 않는다');
+        else if (!ID_RE.test(sub.name.slice(0, -3))) add('error', w, '파일 이름은 영문 슬러그 — 소문자·숫자·하이픈');
+      }
+    } else if (ent.name.endsWith('.md') && ids.has(ent.name.slice(0, -3))) {
+      add('error', where, '옛 형식(카테고리 = 파일 하나) — `migrate` 로 카테고리 폴더 + 항목 파일로 옮긴다');
+    } else add('error', where, '항목은 카테고리 폴더 안에 둔다 (`<카테고리>/<슬러그>.md`)');
   }
 
   items.forEach((it, i) => {
-    for (const f of FIELDS) if (!it.fields[f].some(Boolean)) add('error', at(it), `'${f}' 없음`);
-    for (const s of it.fields.출처) {
-      if (s && !DATE_RE.test(s.split(',')[0].trim())) add('error', at(it), `출처는 날짜로 시작한다 — '- 출처: YYYY-MM-DD, …' ('${s}')`);
-      else if (DOUBLE_DATE_RE.test(s)) add('warn', at(it), `출처에 날짜가 둘 — 그 일이 있던 날 하나만 ('${s}', v0.2.0 이하 add 가 붙인 것일 수 있다)`);
+    if (!it.title) add('error', at(it, 1), "제목(`# …`) 없음");
+    if (!it.sources.length) add('error', at(it), "'- 출처:' 없음 — 제목 아래");
+    for (const s of it.sources) {
+      if (!DATE_RE.test(s.text.split(',')[0].trim())) add('error', at(it, s.line), `출처는 날짜로 시작한다 — '- 출처: YYYY-MM-DD, …' ('${s.text}')`);
+      else if (DOUBLE_DATE_RE.test(s.text)) add('warn', at(it, s.line), `출처에 날짜가 둘 — 그 일이 있던 날 하나만 ('${s.text}')`);
     }
+    for (const sec of SECTIONS) if (!it.sections[sec]) add('error', at(it), `'## ${sec}' 절 없음`);
+    if (it.sections.요약) {
+      if (!it.why.some(Boolean)) add('error', at(it, it.sections.요약.line), "요약에 '- 왜:' 없음");
+      if (!it.when.some(Boolean)) add('error', at(it, it.sections.요약.line), "요약에 '- 언제:' 없음");
+    }
+    if (it.sections.사례 && !it.sections.사례.body.length) add('warn', at(it, it.sections.사례.line), '사례가 비어 있다 — 출처를 읽고 상황·증상·원인·해결을 채운다');
+    if (it.sections.적용 && !it.sections.적용.body.length) add('warn', at(it, it.sections.적용.line), '적용이 비어 있다 — 다른 프로젝트에서 알아보는 신호를 채운다');
+    if (!it.title) return;
     if (/[?？]$/.test(it.title)) add('warn', at(it), '질문형 제목 — 배운 것을 한 줄 규칙으로');
     if (TITLE_DASH_RE.test(it.title)) add('warn', at(it), "제목에 ' — ' — 이유·조건은 '왜'·'언제' 로 옮기고 제목은 배운 것 하나로");
     for (const prev of items.slice(0, i)) {
+      if (prev.slug === it.slug) add('error', at(it), `슬러그 중복: ${rel(ctx, prev.file)} — 슬러그는 카테고리를 통틀어 하나`);
+      if (!prev.title) continue;
       if (normalize(prev.title) === normalize(it.title)) add('error', at(it), `같은 제목: ${at(prev)} — 한 항목으로 합친다`);
       else if (isSimilar(prev.title, it.title)) add('warn', at(it), `비슷한 제목: ${at(prev)} '${prev.title}' — 같은 교훈이면 합친다`);
     }
@@ -546,8 +665,9 @@ function cmdHints(ctx, pos, opt) {
 const USAGE = `work-learnings v${VERSION} — docs/learnings/ 배움 기록 (규칙: ${path.join(SKILL_DIR, 'rules.md')})
 
   init
-  add --category <id> --title "<배운 것 한 줄>" --why "<왜>" --when "<언제>" --source "<일감·커밋·작업>" [--date YYYY-MM-DD] [--force]
-  add --stdin [--force]    (필드를 JSON 으로: {"category","title","why","when","source","date"?} 또는 그 배열)
+  add --stdin [--force]    (JSON: {"category","slug","title","why","when","case","apply","source","date"?} 또는 그 배열)
+  add --category <id> --slug <slug> --title "<배운 것 한 줄>" --why "<왜>" --when "<언제>" --case "<사례>" --apply "<적용>" --source "<일감·커밋·작업>" [--date YYYY-MM-DD] [--force]
+  migrate [--stdin]        (v0.3 이하 형식을 옮긴다 — 인자 없이 실행하면 슬러그를 채울 JSON 을 출력)
   list [<카테고리>]
   lint [--fix]
   category <id> --scope "<범위>" --reason "<근거>"
@@ -560,7 +680,7 @@ function main() {
   const [cmd, ...args] = pos;
   const root = path.resolve(typeof opt.root === 'string' ? opt.root : process.cwd());
   const ctx = { root, dir: path.resolve(root, typeof opt.dir === 'string' ? opt.dir : 'docs/learnings') };
-  const COMMANDS = { init: cmdInit, add: cmdAdd, list: cmdList, lint: cmdLint, category: cmdCategory, hints: cmdHints };
+  const COMMANDS = { init: cmdInit, add: cmdAdd, migrate: cmdMigrate, list: cmdList, lint: cmdLint, category: cmdCategory, hints: cmdHints };
   if (!cmd || cmd === 'help' || opt.help) console.log(USAGE);
   else if (!COMMANDS[cmd]) fail(`모르는 명령: ${cmd}\n\n${USAGE}`);
   else COMMANDS[cmd](ctx, args, opt);
